@@ -1,0 +1,64 @@
+# Meeting AI 环境配置 (CPU 版本)
+#
+# 如果你有 NVIDIA GPU，推荐使用 environment-cuda.yml 获得更好的性能
+#
+# 使用方法:
+#   mamba env create -f environment.yml
+#   mamba activate meeting-ai
+
+name: meeting-ai
+channels:
+  - conda-forge
+  - pytorch
+  - defaults
+
+dependencies:
+  # Python
+  - python=3.11
+
+  # PyTorch (CPU 版本，跨平台兼容)
+  - pytorch>=2.0
+  - torchaudio>=2.0
+  - cpuonly
+
+  # 系统依赖
+  - ffmpeg
+
+  # 编译工具 (Windows 上 llama-cpp-python 需要)
+  - cmake
+  - cxx-compiler  # Linux/macOS
+  # - vs2022_win-64  # Windows 上取消注释
+
+  # pip 安装的包
+  - pip
+  - pip:
+      # 核心
+      - numpy>=1.24.0
+      - pydantic>=2.0.0
+      - pydantic-settings>=2.0.0
+      - rich>=13.0.0
+      - typer>=0.9.0
+
+      # 音频处理
+      - soundfile>=0.12.0
+      - librosa>=0.10.0
+
+      # ASR
+      - faster-whisper>=1.0.0
+
+      # 说话人分离
+      - pyannote-audio>=3.1.0
+
+      # LLM
+      - llama-cpp-python>=0.2.0
+
+      # GUI
+      - flet>=0.80.0
+      - flet-audio>=0.1.0
+
+      # 实时流式
+      - sounddevice>=0.4.6
+      - webrtcvad>=2.0.10
+
+      # 音频增强 (可选)
+      - noisereduce>=3.0.0

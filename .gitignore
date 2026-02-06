@@ -44,10 +44,20 @@ models/
 outputs/
 audio/
 
+# Node.js
+node_modules/
+
+# 前端构建输出
+frontend/dist/
+
 # 临时测试文件
 dm.py
 download.py
 test.py
+debug_result.txt
+
+# Snapshots (local state records)
+snapshots/
 
 # Claude Code 本地设置
 .claude/

@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义样式 */
+body {
+  font-family: 'Noto Sans SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+}
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
+
+/* 音频播放器进度条 */
+input[type="range"].audio-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  height: 6px;
+  border-radius: 3px;
+}
+
+input[type="range"].audio-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: #2563eb;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out;
+}
+
+input[type="range"].audio-slider::-webkit-slider-thumb:hover {
+  background-color: #1d4ed8;
+}
+
+input[type="range"].audio-slider::-moz-range-thumb {
+  background-color: #2563eb;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+}
+
+input[type="range"].audio-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+}
