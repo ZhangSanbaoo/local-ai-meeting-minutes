@@ -1,47 +1,47 @@
 """
-音频增强预处理模块
+专业级音频增强预处理模块
 
 在语音识别和说话人分离之前对音频进行预处理，提高识别准确率。
 
-主要功能：
-1. 降噪 (Noise Reduction) - 去除背景噪音
-2. 去混响 (Dereverberation) - 减少房间回声
-3. 音量归一化 (Normalization) - 统一音量水平
-4. 语音增强 (Speech Enhancement) - 突出人声
+增强管线（按处理顺序）：
+1. Demucs v4 — 人声分离（去除背景音乐/特效声音）
+2. DeepFilterNet3 — 专业降噪 + 去混响（CPU 实时）
+3. Resemble Enhance — 语音清晰化 + 超分辨率（GPU 加速）
+4. 音量归一化
 """
 
-import subprocess
-import tempfile
 import wave
+from math import gcd
 from pathlib import Path
 
 import numpy as np
+from scipy.signal import resample_poly
 
-from ..config import get_settings
 from ..logger import get_logger
 
 logger = get_logger("utils.enhance")
 
-# 全局模型缓存
-_denoiser = None
-_separator = None
 
+def _resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    """使用 scipy.signal.resample_poly 进行高质量重采样（librosa 在某些环境下会挂起）"""
+    if orig_sr == target_sr:
+        return audio
+    g = gcd(target_sr, orig_sr)
+    return resample_poly(audio, target_sr // g, orig_sr // g).astype(np.float32)
 
-def _check_ffmpeg() -> bool:
-    """检查 ffmpeg 是否可用"""
-    try:
-        subprocess.run(
-            ["ffmpeg", "-version"],
-            capture_output=True,
-            check=True,
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+# ---------------------------------------------------------------------------
+# 全局模型缓存（懒加载）
+# ---------------------------------------------------------------------------
+_df_session = None  # ONNX Runtime session for DeepFilterNet3
+_demucs_model = None
+
+# ---------------------------------------------------------------------------
+# 音频 I/O 工具
+# ---------------------------------------------------------------------------
 
 
 def _read_wav(wav_path: Path) -> tuple[int, np.ndarray]:
-    """读取 WAV 文件"""
+    """读取 WAV 文件，返回 (sample_rate, float32 单声道音频)"""
     with wave.open(str(wav_path), "rb") as w:
         sample_rate = w.getframerate()
         n_frames = w.getnframes()
@@ -56,7 +56,6 @@ def _read_wav(wav_path: Path) -> tuple[int, np.ndarray]:
     else:
         raise ValueError(f"不支持的采样位深: {sample_width}")
 
-    # 如果是立体声，转为单声道
     if channels == 2:
         audio = audio.reshape(-1, 2).mean(axis=1)
 
@@ -64,19 +63,16 @@ def _read_wav(wav_path: Path) -> tuple[int, np.ndarray]:
 
 
 def _write_wav(wav_path: Path, sample_rate: int, audio: np.ndarray) -> None:
-    """写入 WAV 文件"""
-    # 确保是单声道
+    """写入 WAV 文件（单声道 int16）"""
     if audio.ndim > 1:
         audio = audio.mean(axis=-1)
-    
-    # 归一化到 [-1, 1]
+
     max_val = np.abs(audio).max()
     if max_val > 0:
         audio = audio / max_val * 0.95
-    
-    # 转换为 int16
+
     pcm_data = (audio * 32767).astype(np.int16).tobytes()
-    
+
     with wave.open(str(wav_path), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -84,257 +80,323 @@ def _write_wav(wav_path: Path, sample_rate: int, audio: np.ndarray) -> None:
         w.writeframes(pcm_data)
 
 
+# ---------------------------------------------------------------------------
+# 音量归一化
+# ---------------------------------------------------------------------------
+
+
 def normalize_audio(audio: np.ndarray, target_db: float = -20.0) -> np.ndarray:
-    """
-    音量归一化
-    
-    Args:
-        audio: 音频数据
-        target_db: 目标音量（dB）
-        
-    Returns:
-        归一化后的音频
-    """
-    # 计算当前 RMS
+    """RMS 音量归一化到目标 dB"""
     rms = np.sqrt(np.mean(audio ** 2))
     if rms < 1e-8:
         return audio
-    
-    # 计算当前 dB
+
     current_db = 20 * np.log10(rms + 1e-8)
-    
-    # 计算增益
     gain = 10 ** ((target_db - current_db) / 20)
-    
-    # 应用增益，但限制最大值
     normalized = audio * gain
     normalized = np.clip(normalized, -1.0, 1.0)
-    
+
     return normalized
 
 
-def reduce_noise_simple(audio: np.ndarray, sample_rate: int) -> np.ndarray:
-    """
-    简单降噪（基于频谱减法）
-    
-    适用于平稳噪声（如风扇、空调）
-    """
-    try:
-        import noisereduce as nr
-        
-        # 使用 noisereduce 库
-        reduced = nr.reduce_noise(
-            y=audio,
-            sr=sample_rate,
-            prop_decrease=0.8,  # 降噪强度
-            stationary=True,  # 假设噪声是平稳的
-        )
-        return reduced.astype(np.float32)
-    except ImportError:
-        logger.warning("noisereduce 未安装，跳过降噪。请运行: pip install noisereduce")
-        return audio
-
-
-def reduce_noise_deep(audio: np.ndarray, sample_rate: int) -> np.ndarray:
-    """
-    深度学习降噪（使用 SpeechBrain 或 noisereduce 增强模式）
-    
-    效果更好，但需要额外安装
-    """
-    try:
-        # 尝试使用 noisereduce 的非平稳降噪模式（效果更好）
-        import noisereduce as nr
-        
-        logger.info("使用 noisereduce 深度降噪模式...")
-        
-        # 非平稳降噪，对复杂噪声更有效
-        # 注意: n_jobs=1 避免 Windows 多进程序列化问题
-        reduced = nr.reduce_noise(
-            y=audio,
-            sr=sample_rate,
-            prop_decrease=0.9,  # 更强的降噪
-            stationary=False,   # 非平稳噪声模式
-            n_fft=2048,
-            hop_length=512,
-            n_jobs=1,  # Windows 兼容：单线程模式避免序列化错误
-        )
-        return reduced.astype(np.float32)
-        
-    except ImportError:
-        logger.warning("noisereduce 未安装，跳过深度降噪。请运行: pip install noisereduce")
-        return audio
-    except Exception as e:
-        logger.warning(f"深度降噪失败: {e}，使用简单降噪")
-        return reduce_noise_simple(audio, sample_rate)
+# ---------------------------------------------------------------------------
+# 1. Demucs v4 — 人声分离
+# ---------------------------------------------------------------------------
 
 
 def separate_vocals(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     """
-    人声分离（使用 Demucs 或 Spleeter）
-    
-    从音频中提取人声，去除背景音乐和音效
+    Demucs v4 人声分离 — 从音频中提取人声，去除背景音乐和音效
+
+    模型: htdemucs (Hybrid Transformer Demucs)
+    输出: drums, bass, other, vocals → 只取 vocals
     """
-    global _separator
-    
+    global _demucs_model
+
     try:
-        # 尝试使用 demucs
         import torch
         from demucs.pretrained import get_model
         from demucs.apply import apply_model
-        
-        if _separator is None:
-            logger.info("加载 Demucs 人声分离模型...")
-            _separator = get_model('htdemucs')
-            _separator.eval()
+
+        if _demucs_model is None:
+            logger.info("加载 Demucs v4 人声分离模型 (htdemucs)...")
+            _demucs_model = get_model("htdemucs")
+            _demucs_model.eval()
             if torch.cuda.is_available():
-                _separator.cuda()
+                _demucs_model.cuda()
             logger.info("Demucs 加载完成")
-        
-        # Demucs 需要特定格式
-        if sample_rate != 44100:
-            import librosa
-            audio_44k = librosa.resample(audio, orig_sr=sample_rate, target_sr=44100)
-        else:
-            audio_44k = audio
-        
-        # 转换为 tensor
-        wav = torch.tensor(audio_44k).unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
+
+        # Demucs 训练于 44.1kHz，需要 resample
+        audio_44k = _resample(audio, sample_rate, 44100)
+
+        # 转换为 tensor: (batch, channels, samples)
+        wav = torch.tensor(audio_44k, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
         if torch.cuda.is_available():
             wav = wav.cuda()
-        
-        # 分离
+
         with torch.no_grad():
-            sources = apply_model(_separator, wav)
-        
-        # 提取人声 (vocals)
-        # demucs 输出顺序: drums, bass, other, vocals
+            sources = apply_model(_demucs_model, wav)
+
+        # 提取人声 (index 3 = vocals)
         vocals = sources[0, 3].cpu().numpy()
-        
-        # 重采样回原始采样率
-        if sample_rate != 44100:
-            vocals = librosa.resample(vocals, orig_sr=44100, target_sr=sample_rate)
-        
+        if vocals.ndim > 1:
+            vocals = vocals.mean(axis=0)
+
+        # resample 回原始采样率
+        vocals = _resample(vocals, 44100, sample_rate)
+
+        logger.info("Demucs 人声分离完成")
         return vocals.astype(np.float32)
-        
+
     except ImportError:
-        logger.warning("Demucs 未安装，跳过人声分离。如需分离人声请运行: pip install demucs")
+        logger.warning("Demucs 未安装，跳过人声分离。请运行: pip install demucs")
         return audio
     except Exception as e:
-        logger.warning(f"人声分离失败: {e}")
+        logger.warning(f"Demucs 人声分离失败: {e}")
         return audio
+
+
+# ---------------------------------------------------------------------------
+# 2. DeepFilterNet3 — 专业降噪 + 去混响
+# ---------------------------------------------------------------------------
+
+
+def _get_deepfilter_model_path() -> Path:
+    """获取 DeepFilterNet3 ONNX 模型路径"""
+    # 按优先级搜索
+    candidates = [
+        Path(__file__).parent.parent.parent.parent.parent / "models" / "deepfilter" / "denoiser_model.onnx",
+        Path("models/deepfilter/denoiser_model.onnx"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        "找不到 DeepFilterNet3 ONNX 模型。"
+        "请将 denoiser_model.onnx 放到 models/deepfilter/ 目录"
+    )
+
+
+def denoise_deepfilter(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """
+    DeepFilterNet3 专业降噪 + 去混响 (ONNX Runtime 推理)
+
+    特点: ~16MB ONNX 模型, CPU/GPU, PESQ 3.17, 48kHz 全带宽
+    无需 Rust 编译，使用 onnxruntime 直接推理
+    """
+    global _df_session
+
+    try:
+        import onnxruntime as ort
+
+        if _df_session is None:
+            model_path = _get_deepfilter_model_path()
+            logger.info(f"加载 DeepFilterNet3 ONNX 模型: {model_path}")
+
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+            sess_options.intra_op_num_threads = 4
+            sess_options.inter_op_num_threads = 1
+            sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+            # 尝试 CUDA, 如果不支持则回退 CPU
+            # (模型的 FusedConv+Sigmoid 在某些 CUDA EP 版本不兼容)
+            if ort.get_device() == "GPU":
+                try:
+                    _df_session = ort.InferenceSession(
+                        str(model_path), sess_options,
+                        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                    )
+                except Exception:
+                    logger.info("DeepFilterNet3 CUDA 不兼容, 回退 CPU")
+                    _df_session = None
+
+            if _df_session is None:
+                _df_session = ort.InferenceSession(
+                    str(model_path), sess_options,
+                    providers=["CPUExecutionProvider"],
+                )
+
+            logger.info(f"DeepFilterNet3 加载完成 (provider: {_df_session.get_providers()[0]})")
+
+        # DeepFilterNet3 训练于 48kHz
+        DF_SR = 48000
+        HOP_SIZE = 480
+        FFT_SIZE = 960
+        STATE_SIZE = 45304
+
+        # resample 到 48kHz
+        audio_48k = _resample(audio, sample_rate, DF_SR) if sample_rate != DF_SR else audio.copy()
+
+        audio_48k = audio_48k.astype(np.float32)
+
+        # 填充 padding (对齐 hop_size)
+        orig_len = len(audio_48k)
+        hop_pad = (HOP_SIZE - orig_len % HOP_SIZE) % HOP_SIZE
+        orig_len += hop_pad
+        audio_padded = np.pad(audio_48k, (0, FFT_SIZE + hop_pad), mode="constant")
+
+        # 分帧
+        n_frames = len(audio_padded) // HOP_SIZE
+        frames = [audio_padded[i * HOP_SIZE: (i + 1) * HOP_SIZE] for i in range(n_frames)]
+
+        # 逐帧推理
+        state = np.zeros(STATE_SIZE, dtype=np.float32)
+        atten_lim_db = np.zeros(1, dtype=np.float32)
+        enhanced_frames = []
+
+        for frame in frames:
+            out = _df_session.run(None, {
+                "input_frame": frame,
+                "states": state,
+                "atten_lim_db": atten_lim_db,
+            })
+            enhanced_frames.append(out[0])
+            state = out[1]
+
+        # 拼接并裁剪
+        enhanced = np.concatenate(enhanced_frames)
+        d = FFT_SIZE - HOP_SIZE  # = 480, 算法延迟
+        enhanced = enhanced[d: orig_len + d]
+
+        # resample 回原始采样率
+        if sample_rate != DF_SR:
+            enhanced = _resample(enhanced, DF_SR, sample_rate)
+
+        logger.info("DeepFilterNet3 降噪完成")
+        return enhanced.astype(np.float32)
+
+    except ImportError:
+        logger.warning(
+            "onnxruntime 未安装，跳过专业降噪。请运行: pip install onnxruntime-gpu"
+        )
+        return audio
+    except FileNotFoundError as e:
+        logger.warning(str(e))
+        return audio
+    except Exception as e:
+        logger.warning(f"DeepFilterNet3 降噪失败: {e}")
+        return audio
+
+
+# ---------------------------------------------------------------------------
+# 3. Resemble Enhance — 语音清晰化 + 超分辨率
+# ---------------------------------------------------------------------------
+
+
+def enhance_clarity(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """
+    Resemble Enhance 语音清晰化 + 超分辨率
+
+    两阶段管线:
+    - Stage 1 (Denoiser): UNet 降噪器，快速
+    - Stage 2 (Enhancer): CFM (Conditional Flow Matching) 生成模型，
+      将语音提升至 44.1kHz 录音室品质
+
+    需要 GPU 加速（CFM 推理较慢）
+    模型权重自动下载到 HuggingFace cache
+    """
+    try:
+        import torch
+        from resemble_enhance.enhancer.inference import enhance as resemble_enhance
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        # 转换为 1D torch tensor
+        audio_tensor = torch.from_numpy(audio).float()
+
+        logger.info(f"Resemble Enhance 语音清晰化开始 (device={device})...")
+
+        # enhance() 内部会自动下载模型、处理 resample、分块推理
+        # 返回 (enhanced_wav, sr) — enhanced_wav 是 CPU tensor
+        enhanced, new_sr = resemble_enhance(
+            dwav=audio_tensor,
+            sr=sample_rate,
+            device=device,
+            nfe=32,             # CFM 采样步数 (默认 32, 速度/质量平衡)
+            solver="midpoint",  # ODE solver
+            lambd=0.9,          # 降噪程度 (0=纯增强, 1=最大降噪)
+            tau=0.5,            # CFM 温度 (0=保守, 1=最大增强)
+        )
+
+        result = enhanced.cpu().numpy()
+
+        # Resemble Enhance 输出可能是 44.1kHz, resample 回原始采样率
+        if new_sr != sample_rate:
+            result = _resample(result, new_sr, sample_rate)
+
+        # 释放 GPU 内存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        logger.info("Resemble Enhance 语音清晰化完成")
+        return result.astype(np.float32)
+
+    except ImportError:
+        logger.warning(
+            "Resemble Enhance 未安装，跳过语音清晰化。"
+            "请运行: pip install resemble-enhance"
+        )
+        return audio
+    except Exception as e:
+        logger.warning(f"Resemble Enhance 语音清晰化失败: {e}")
+        return audio
+
+
+# ---------------------------------------------------------------------------
+# 主入口 — 专业音频增强管线
+# ---------------------------------------------------------------------------
 
 
 def enhance_audio(
     input_path: Path,
     output_path: Path,
-    denoise: bool = True,
-    normalize: bool = True,
-    separate_voice: bool = False,
-    deep_denoise: bool = False,
+    mode: str = "none",
 ) -> Path:
     """
-    音频增强主函数
-    
+    专业音频增强管线
+
     Args:
-        input_path: 输入音频路径
+        input_path: 输入音频路径 (16kHz WAV)
         output_path: 输出音频路径
-        denoise: 是否降噪
-        normalize: 是否归一化音量
-        separate_voice: 是否分离人声（去除背景音乐/音效）
-        deep_denoise: 是否使用深度学习降噪（效果更好但更慢）
-        
+        mode: 增强模式
+            - "none": 不增强
+            - "denoise": DeepFilterNet3 降噪+去混响
+            - "enhance": DeepFilterNet3 + Resemble Enhance 降噪+清晰化
+            - "vocal": Demucs v4 人声分离
+            - "full": Demucs + DeepFilterNet3 + Resemble Enhance 完整增强
+
     Returns:
         处理后的音频路径
     """
-    logger.info(f"开始音频增强: {input_path}")
-    
-    # 读取音频
+    if mode == "none":
+        return input_path
+
+    logger.info(f"开始音频增强: mode={mode}, 输入={input_path}")
+
     sample_rate, audio = _read_wav(input_path)
     logger.info(f"原始音频: {len(audio)/sample_rate:.1f}秒, {sample_rate}Hz")
-    
-    # 1. 人声分离（如果需要）
-    if separate_voice:
-        logger.info("正在分离人声...")
+
+    # 1. 人声分离 (vocal / full)
+    if mode in ("vocal", "full"):
+        logger.info("阶段 1/4: Demucs 人声分离...")
         audio = separate_vocals(audio, sample_rate)
-    
-    # 2. 降噪
-    if denoise:
-        logger.info("正在降噪...")
-        if deep_denoise:
-            audio = reduce_noise_deep(audio, sample_rate)
-        else:
-            audio = reduce_noise_simple(audio, sample_rate)
-    
-    # 3. 音量归一化
-    if normalize:
-        logger.info("正在归一化音量...")
-        audio = normalize_audio(audio)
-    
-    # 写入输出文件
+
+    # 2. DeepFilterNet3 降噪 + 去混响 (denoise / enhance / full)
+    if mode in ("denoise", "enhance", "full"):
+        logger.info("阶段 2/4: DeepFilterNet3 降噪+去混响...")
+        audio = denoise_deepfilter(audio, sample_rate)
+
+    # 3. Resemble Enhance 语音清晰化 (enhance / full)
+    if mode in ("enhance", "full"):
+        logger.info("阶段 3/4: Resemble Enhance 语音清晰化...")
+        audio = enhance_clarity(audio, sample_rate)
+
+    # 4. 音量归一化 (始终)
+    logger.info("阶段 4/4: 音量归一化...")
+    audio = normalize_audio(audio)
+
     _write_wav(output_path, sample_rate, audio)
     logger.info(f"音频增强完成: {output_path}")
-    
+
     return output_path
-
-
-def auto_enhance(
-    input_path: Path,
-    output_path: Path | None = None,
-    quality_threshold: float = 0.5,
-) -> Path:
-    """
-    自动检测音频质量并决定增强策略
-    
-    Args:
-        input_path: 输入音频路径
-        output_path: 输出路径（默认在同目录下创建）
-        quality_threshold: 质量阈值，低于此值才增强
-        
-    Returns:
-        处理后的音频路径（如果不需要增强则返回原路径）
-    """
-    sample_rate, audio = _read_wav(input_path)
-    
-    # 简单的音频质量评估
-    # 1. 信噪比估计（基于静音段和语音段的能量比）
-    frame_length = int(sample_rate * 0.025)
-    hop_length = int(sample_rate * 0.010)
-    
-    energies = []
-    for i in range(0, len(audio) - frame_length, hop_length):
-        frame = audio[i:i + frame_length]
-        energy = np.sqrt(np.mean(frame ** 2))
-        energies.append(energy)
-    
-    energies = np.array(energies)
-    
-    # 估计噪声水平（最低 10% 的能量）
-    noise_level = np.percentile(energies, 10)
-    signal_level = np.percentile(energies, 90)
-    
-    if noise_level > 0:
-        snr_estimate = 20 * np.log10(signal_level / noise_level)
-    else:
-        snr_estimate = 60  # 非常干净
-    
-    logger.info(f"估计信噪比: {snr_estimate:.1f} dB")
-    
-    # 判断是否需要增强
-    needs_denoise = snr_estimate < 20  # 信噪比低于 20dB 需要降噪
-    needs_normalize = signal_level < 0.1 or signal_level > 0.9  # 音量过低或过高
-    
-    if not needs_denoise and not needs_normalize:
-        logger.info("音频质量良好，无需增强")
-        return input_path
-    
-    # 确定输出路径
-    if output_path is None:
-        output_path = input_path.parent / f"{input_path.stem}_enhanced{input_path.suffix}"
-    
-    return enhance_audio(
-        input_path,
-        output_path,
-        denoise=needs_denoise,
-        normalize=needs_normalize,
-        deep_denoise=snr_estimate < 10,  # 信噪比非常低才用深度学习
-    )

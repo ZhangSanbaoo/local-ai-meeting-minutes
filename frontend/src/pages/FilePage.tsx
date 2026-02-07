@@ -843,10 +843,10 @@ export function FilePage() {
             className="px-2 py-1 border border-gray-300 rounded text-sm"
           >
             <option value="none">不增强</option>
-            <option value="simple">普通降噪</option>
-            <option value="deep">深度降噪</option>
-            <option value="ai">AI人声分离</option>
-            <option value="deep_ai">深度降噪+AI</option>
+            <option value="denoise">专业降噪 (DeepFilterNet3)</option>
+            <option value="enhance">降噪+清晰化 (DeepFilterNet3 + Resemble)</option>
+            <option value="vocal">人声分离 (Demucs)</option>
+            <option value="full">完整增强 (全部模型)</option>
           </select>
 
           <div className="flex-1" />

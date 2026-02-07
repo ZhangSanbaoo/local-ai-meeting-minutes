@@ -23,10 +23,10 @@ class JobStatus(str, Enum):
 class EnhanceMode(str, Enum):
     """音频增强模式"""
     NONE = "none"
-    SIMPLE = "simple"
-    DEEP = "deep"
-    AI = "ai"
-    DEEP_AI = "deep_ai"
+    DENOISE = "denoise"      # DeepFilterNet3 降噪+去混响
+    ENHANCE = "enhance"      # DeepFilterNet3 + Resemble Enhance 降噪+清晰化
+    VOCAL = "vocal"          # Demucs v4 人声分离
+    FULL = "full"            # Demucs + DeepFilterNet3 + Resemble Enhance 完整增强
 
 
 # ============================================================================

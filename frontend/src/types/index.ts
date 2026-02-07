@@ -2,7 +2,7 @@
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
-export type EnhanceMode = 'none' | 'simple' | 'deep' | 'ai' | 'deep_ai'
+export type EnhanceMode = 'none' | 'denoise' | 'enhance' | 'vocal' | 'full'
 
 export interface Segment {
   id: number

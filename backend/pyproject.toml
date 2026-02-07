@@ -59,8 +59,10 @@ gui = [
     "flet>=0.21.0",
 ]
 enhance = [
-    # 音频增强
-    "noisereduce>=3.0.0",
+    # 专业音频增强
+    "onnxruntime-gpu>=1.16.0",    # DeepFilterNet3 ONNX 推理（降噪+去混响）
+    "resemble-enhance>=0.0.1",    # Resemble Enhance 语音清晰化
+    "demucs>=4.0.0",              # Demucs v4 人声分离
 ]
 stream = [
     # 实时流式（阶段 6）

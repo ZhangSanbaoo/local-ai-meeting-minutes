@@ -195,13 +195,7 @@ def _sync_process_audio(job_id: str) -> dict:
         try:
             from meeting_ai.utils.enhance import enhance_audio
             enhanced_path = output_dir / "audio_enhanced.wav"
-            enhance_audio(
-                wav_path, enhanced_path,
-                denoise=enhance_mode in ["simple", "deep", "deep_ai"],
-                normalize=True,
-                deep_denoise=enhance_mode in ["deep", "deep_ai"],
-                separate_voice=enhance_mode in ["ai", "deep_ai"],
-            )
+            enhance_audio(wav_path, enhanced_path, mode=enhance_mode)
             wav_path = enhanced_path
         except ImportError:
             pass
