@@ -193,64 +193,68 @@ class DiarizationService:
     """
     说话人分离服务
 
+    支持多引擎：
+    - pyannote 系列（config.yaml 标志）
+    - 3D-Speaker / ModelScope 系列（configuration.json 标志）
+
     使用方式：
-        service = DiarizationService()
+        service = DiarizationService("pyannote-3.1")
         result = service.diarize("meeting.wav")
 
         for segment in result.segments:
             print(f"{segment.speaker}: {segment.start:.1f}s - {segment.end:.1f}s")
     """
 
-    def __init__(self) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         """初始化服务（不立即加载模型）"""
-        self._pipeline: Pipeline | None = None
+        self._pipeline = None
         self._settings = get_settings().diarization
+        self._model_name = model_name or self._settings.engine
+
+    def _resolve_model_dir(self) -> Path:
+        """解析模型目录"""
+        settings = get_settings()
+        return settings.paths.models_dir / "diarization" / self._model_name
 
     @property
-    def pipeline(self) -> Pipeline:
-        """
-        懒加载 pyannote pipeline
-
-        第一次访问时加载模型，之后复用。
-        这样可以避免在导入模块时就加载大模型。
-        """
+    def pipeline(self):
+        """懒加载 pipeline"""
         if self._pipeline is None:
             self._pipeline = self._load_pipeline()
         return self._pipeline
 
-    def _load_pipeline(self) -> Pipeline:
-        """从本地目录加载 pyannote 模型"""
-        settings = get_settings()
-        model_dir = self._settings.model_dir
+    def _load_pipeline(self):
+        """自动检测模型类型并加载"""
+        model_dir = self._resolve_model_dir()
 
-        # 解析模型目录的绝对路径
-        if not model_dir.is_absolute():
-            if str(model_dir).startswith("models"):
-                relative_path = Path(*model_dir.parts[1:])
-                model_dir = settings.paths.models_dir / relative_path
-            else:
-                model_dir = settings.paths.models_dir / model_dir
-
-        logger.info(f"加载说话人分离模型: {model_dir}")
+        logger.info(f"加载说话人分离模型: {model_dir} (engine={self._model_name})")
 
         if not model_dir.exists():
             raise FileNotFoundError(
                 f"模型目录不存在: {model_dir}\n"
-                f"请先下载模型到该目录，参考 README.md 中的说明。"
+                f"请先下载模型到该目录。"
             )
 
         config_file = model_dir / "config.yaml"
-        if not config_file.exists():
+        configuration_file = model_dir / "configuration.json"
+
+        if config_file.exists():
+            # pyannote 系列
+            return self._load_pyannote(model_dir, config_file)
+        elif configuration_file.exists():
+            # 3D-Speaker / ModelScope 系列
+            return self._load_3d_speaker(model_dir)
+        else:
             raise FileNotFoundError(
-                f"模型配置文件不存在: {config_file}\n"
-                f"请确保模型下载完整。"
+                f"未知模型格式: {model_dir}\n"
+                f"需要 config.yaml (pyannote) 或 configuration.json (ModelScope)"
             )
 
-        # 读取配置
+    def _load_pyannote(self, model_dir: Path, config_file: Path):
+        """加载 pyannote 系列模型"""
         with open(config_file, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
-        # 检查是否需要修复相对路径
         needs_path_fix = False
         if "pipeline" in config and "params" in config["pipeline"]:
             params = config["pipeline"]["params"]
@@ -259,7 +263,6 @@ class DiarizationService:
                     needs_path_fix = True
                     break
 
-        # 选择计算设备
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"使用设备: {device}")
 
@@ -273,6 +276,18 @@ class DiarizationService:
             pipeline = pipeline.to(device)
 
         return pipeline
+
+    def _load_3d_speaker(self, model_dir: Path):
+        """加载 3D-Speaker / ModelScope 系列模型"""
+        try:
+            from modelscope.pipelines import pipeline as ms_pipeline
+        except ImportError:
+            raise ImportError(
+                "3D-Speaker 模型需要 modelscope 库。请运行: pip install modelscope"
+            )
+
+        logger.info(f"加载 3D-Speaker 模型: {model_dir}")
+        return ms_pipeline(task="speaker-diarization", model=str(model_dir))
 
     def _load_with_fixed_paths(self, model_dir: Path, config: dict, device) -> Pipeline:
         """
@@ -346,12 +361,24 @@ class DiarizationService:
         min_spk = min_speakers or self._settings.min_speakers
         max_spk = max_speakers or self._settings.max_speakers
 
-        diarization_output = self.pipeline(
-            audio_path,
-            min_speakers=min_spk,
-            max_speakers=max_spk,
-        )
+        pipeline = self.pipeline
 
+        # 根据 pipeline 类型选择调用方式
+        if hasattr(pipeline, 'itertracks') or hasattr(pipeline, '__call__'):
+            # pyannote Pipeline — 返回 Annotation 对象
+            diarization_output = pipeline(
+                audio_path,
+                min_speakers=min_spk,
+                max_speakers=max_spk,
+            )
+            return self._parse_pyannote_output(diarization_output)
+        else:
+            # ModelScope pipeline — 返回格式不同
+            diarization_output = pipeline(str(audio_path))
+            return self._parse_modelscope_output(diarization_output)
+
+    def _parse_pyannote_output(self, diarization_output) -> DiarizationResult:
+        """解析 pyannote 输出"""
         segments = []
         speaker_stats: dict[str, dict] = {}
 
@@ -396,13 +423,76 @@ class DiarizationService:
             segments=segments,
         )
 
+    def _parse_modelscope_output(self, output) -> DiarizationResult:
+        """解析 ModelScope / 3D-Speaker 输出"""
+        segments = []
+        speaker_stats: dict[str, dict] = {}
+
+        # ModelScope 返回格式: {"text": "...", "sentences": [{"start": ms, "end": ms, "spk": 0}, ...]}
+        if isinstance(output, dict):
+            sentences = output.get("sentences", output.get("text", []))
+            if isinstance(sentences, list):
+                for item in sentences:
+                    if isinstance(item, dict):
+                        start = item.get("start", 0) / 1000.0  # ms -> s
+                        end = item.get("end", 0) / 1000.0
+                        spk = f"SPEAKER_{item.get('spk', item.get('speaker', 0)):02d}"
+                    else:
+                        continue
+
+                    segment = Segment(
+                        id=len(segments),
+                        start=start,
+                        end=end,
+                        text="",
+                        speaker=spk,
+                    )
+                    segments.append(segment)
+
+                    if spk not in speaker_stats:
+                        speaker_stats[spk] = {"total_duration": 0.0, "segment_count": 0}
+                    speaker_stats[spk]["total_duration"] += segment.duration
+                    speaker_stats[spk]["segment_count"] += 1
+
+        speakers = {}
+        for speaker_id, stats in speaker_stats.items():
+            speakers[speaker_id] = SpeakerInfo(
+                id=speaker_id,
+                display_name=speaker_id,
+                total_duration=stats["total_duration"],
+                segment_count=stats["segment_count"],
+            )
+
+        logger.info(
+            f"说话人分离完成 (ModelScope): {len(speakers)} 个说话人, {len(segments)} 个片段"
+        )
+
+        return DiarizationResult(
+            speakers=speakers,
+            segments=segments,
+        )
+
+
+# ============================================================================
+# 工厂函数（支持引擎切换）
+# ============================================================================
 
 _service: DiarizationService | None = None
+_service_model: str | None = None
 
 
-def get_diarization_service() -> DiarizationService:
-    """获取说话人分离服务的单例"""
-    global _service
+def get_diarization_service(model_name: str | None = None) -> DiarizationService:
+    """获取说话人分离服务（支持按模型名切换）"""
+    global _service, _service_model
+
+    if model_name is None:
+        model_name = get_settings().diarization.engine
+
+    if _service is not None and _service_model != model_name:
+        _service = None  # 模型切换，重新创建
+
     if _service is None:
-        _service = DiarizationService()
+        _service = DiarizationService(model_name)
+        _service_model = model_name
+
     return _service

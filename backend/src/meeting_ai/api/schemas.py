@@ -160,6 +160,8 @@ class ModelsListResponse(BaseModel):
     """模型列表响应"""
     whisper_models: list[ModelInfoResponse]
     llm_models: list[ModelInfoResponse]
+    diarization_models: list[ModelInfoResponse]
+    gender_models: list[ModelInfoResponse]
 
 
 class StreamingEngineResponse(BaseModel):

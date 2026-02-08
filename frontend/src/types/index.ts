@@ -61,6 +61,8 @@ export interface ModelInfo {
 export interface ModelsResponse {
   whisper_models: ModelInfo[]
   llm_models: ModelInfo[]
+  diarization_models: ModelInfo[]
+  gender_models: ModelInfo[]
 }
 
 export interface SystemInfo {
@@ -76,6 +78,8 @@ export interface SystemInfo {
 export interface ProcessOptions {
   whisper_model: string
   llm_model?: string
+  diarization_model?: string
+  gender_model?: string
   enable_naming: boolean
   enable_correction: boolean
   enable_summary: boolean

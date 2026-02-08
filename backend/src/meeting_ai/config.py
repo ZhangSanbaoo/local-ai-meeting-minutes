@@ -64,17 +64,27 @@ class ASRSettings(BaseSettings):
 class DiarizationSettings(BaseSettings):
     """说话人分离配置"""
 
-    # 本地模型目录（相对于项目根目录或绝对路径）
-    model_dir: Path = Field(default=Path("models/pyannote/speaker-diarization-3.1"))
+    # 引擎名称（对应 models/diarization/{engine}/ 目录名）
+    engine: str = Field(default="pyannote-3.1")
 
     # 聚类参数
     min_speakers: int | None = None  # 最少说话人数（可选）
     max_speakers: int | None = None  # 最多说话人数（可选）
-    
+
     # 合并阈值：embedding 余弦相似度超过此值认为是同一人
     embedding_threshold: float = 0.75
 
     model_config = SettingsConfigDict(env_prefix="MEETING_AI_DIAR_")
+
+
+class GenderSettings(BaseSettings):
+    """性别检测配置"""
+
+    # 引擎名称: f0 / ecapa-gender / wav2vec2-gender
+    # f0 = 内置基频分析（零依赖），其他引擎对应 models/gender/{engine}/ 目录
+    engine: str = Field(default="f0")
+
+    model_config = SettingsConfigDict(env_prefix="MEETING_AI_GENDER_")
 
 
 class StreamingSettings(BaseSettings):
@@ -186,6 +196,7 @@ class Settings(BaseSettings):
     paths: PathSettings = Field(default_factory=PathSettings)
     asr: ASRSettings = Field(default_factory=ASRSettings)
     diarization: DiarizationSettings = Field(default_factory=DiarizationSettings)
+    gender: GenderSettings = Field(default_factory=GenderSettings)
     streaming: StreamingSettings = Field(default_factory=StreamingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
 

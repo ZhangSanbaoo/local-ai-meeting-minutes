@@ -554,6 +554,8 @@ async def _post_process_recording(
     enable_naming = config.get("enable_naming", True)
     enable_correction = config.get("enable_correction", True)
     enable_summary = config.get("enable_summary", True)
+    diarization_model = config.get("diarization_model", None)
+    gender_model = config.get("gender_model", None)
 
     try:
         # ── Step 0: 卸载 ASR 引擎，释放 GPU 显存 ──
@@ -581,7 +583,7 @@ async def _post_process_recording(
         })
 
         from ...services.diarization import get_diarization_service
-        diar_service = get_diarization_service()
+        diar_service = get_diarization_service(diarization_model)
 
         diar_result = await loop.run_in_executor(
             None, diar_service.diarize, str(wav_path)
@@ -686,9 +688,10 @@ async def _post_process_recording(
             })
 
             from ...services.gender import detect_all_genders
+            from functools import partial
             # 注意: detect_all_genders 需要 list[Segment]，不是 DiarizationResult
             gender_map = await loop.run_in_executor(
-                None, detect_all_genders, str(wav_path), diar_result.segments
+                None, partial(detect_all_genders, str(wav_path), diar_result.segments, engine_name=gender_model)
             )
 
             await send_json(ws, {

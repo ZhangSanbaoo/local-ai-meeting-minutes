@@ -84,12 +84,42 @@ export async function getAudioDevices(): Promise<AudioDevicesResponse> {
 }
 
 // 处理相关
+export async function uploadDiarizationModel(file: File): Promise<{ status: string; model_name: string; path: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await client.post('/models/upload/diarization', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+  })
+  return data
+}
+
+export async function uploadGenderModel(file: File): Promise<{ status: string; model_name: string; path: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await client.post('/models/upload/gender', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+  })
+  return data
+}
+
+export async function deleteDiarizationModel(modelName: string): Promise<void> {
+  await client.delete(`/models/diarization/${modelName}`)
+}
+
+export async function deleteGenderModel(modelName: string): Promise<void> {
+  await client.delete(`/models/gender/${modelName}`)
+}
+
 export async function uploadAndProcess(
   file: File,
   options: {
     name?: string  // 自定义会议名称
     whisper_model: string
     llm_model?: string
+    diarization_model?: string
+    gender_model?: string
     enable_naming: boolean
     enable_correction: boolean
     enable_summary: boolean
@@ -104,6 +134,12 @@ export async function uploadAndProcess(
   formData.append('whisper_model', options.whisper_model)
   if (options.llm_model) {
     formData.append('llm_model', options.llm_model)
+  }
+  if (options.diarization_model) {
+    formData.append('diarization_model', options.diarization_model)
+  }
+  if (options.gender_model) {
+    formData.append('gender_model', options.gender_model)
   }
   formData.append('enable_naming', String(options.enable_naming))
   formData.append('enable_correction', String(options.enable_correction))

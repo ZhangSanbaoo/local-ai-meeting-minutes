@@ -50,6 +50,8 @@ export interface RecordingConfig {
   enableCorrection?: boolean
   enableSummary?: boolean
   asrEngine?: string
+  diarizationModel?: string
+  genderModel?: string
 }
 
 interface UseRealtimeWebSocketCallbacks {
@@ -252,6 +254,8 @@ export function useRealtimeWebSocket(
           enable_correction: config?.enableCorrection ?? true,
           enable_summary: config?.enableSummary ?? true,
           asr_engine: config?.asrEngine,
+          diarization_model: config?.diarizationModel,
+          gender_model: config?.genderModel,
         },
       })
     )

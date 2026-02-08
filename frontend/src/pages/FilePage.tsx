@@ -20,10 +20,16 @@ export function FilePage() {
     // 模型
     whisperModels,
     llmModels,
+    diarizationModels,
+    genderModels,
     selectedWhisperModel,
     selectedLlmModel,
+    selectedDiarizationModel,
+    selectedGenderModel,
     setSelectedWhisperModel,
     setSelectedLlmModel,
+    setSelectedDiarizationModel,
+    setSelectedGenderModel,
 
     // 选项
     enableNaming,
@@ -111,7 +117,12 @@ export function FilePage() {
   const refreshModels = useCallback(async () => {
     try {
       const data = await api.getModels()
-      useAppStore.getState().setModels(data.whisper_models, data.llm_models)
+      useAppStore.getState().setModels(
+        data.whisper_models,
+        data.llm_models,
+        data.diarization_models,
+        data.gender_models,
+      )
       if (data.whisper_models.length > 0 && !selectedWhisperModel) {
         setSelectedWhisperModel(data.whisper_models[0].name)
       }
@@ -221,6 +232,8 @@ export function FilePage() {
         name: meetingName.trim() || undefined,  // 自定义会议名称
         whisper_model: selectedWhisperModel,
         llm_model: selectedLlmModel !== 'disabled' ? selectedLlmModel : undefined,
+        diarization_model: selectedDiarizationModel || undefined,
+        gender_model: selectedGenderModel || undefined,
         enable_naming: enableNaming,
         enable_correction: enableCorrection,
         enable_summary: enableSummary,
@@ -773,6 +786,34 @@ export function FilePage() {
             className="px-3 py-2 border border-gray-300 rounded text-sm"
           >
             {llmModels.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.display_name}
+              </option>
+            ))}
+          </select>
+
+          {diarizationModels.length > 0 && (
+            <select
+              value={selectedDiarizationModel}
+              onChange={(e) => setSelectedDiarizationModel(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded text-sm"
+              title="说话人分离模型"
+            >
+              {diarizationModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.display_name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <select
+            value={selectedGenderModel}
+            onChange={(e) => setSelectedGenderModel(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded text-sm"
+            title="性别检测模型"
+          >
+            {genderModels.map((m) => (
               <option key={m.name} value={m.name}>
                 {m.display_name}
               </option>

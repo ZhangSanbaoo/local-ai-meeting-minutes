@@ -31,6 +31,12 @@ export function RealtimePage() {
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
   const [selectedLlm, setSelectedLlm] = useState('')
 
+  // Diarization + Gender models
+  const [diarizationModels, setDiarizationModels] = useState<ModelInfo[]>([])
+  const [selectedDiarModel, setSelectedDiarModel] = useState('')
+  const [genderModels, setGenderModels] = useState<ModelInfo[]>([])
+  const [selectedGenderModel, setSelectedGenderModel] = useState('f0')
+
   // ── Load available engines, models, mic devices ──
   useEffect(() => {
     getStreamingEngines()
@@ -43,9 +49,18 @@ export function RealtimePage() {
     getModels()
       .then((res) => {
         setLlmModels(res.llm_models)
-        // Default to first non-disabled model, or 'disabled'
         const defaultLlm = res.llm_models.find((m) => m.name !== 'disabled')
         setSelectedLlm(defaultLlm?.name || 'disabled')
+
+        setDiarizationModels(res.diarization_models)
+        if (res.diarization_models.length > 0) {
+          setSelectedDiarModel(res.diarization_models[0].name)
+        }
+
+        setGenderModels(res.gender_models)
+        if (res.gender_models.length > 0) {
+          setSelectedGenderModel(res.gender_models[0].name)
+        }
       })
       .catch((err) => console.error('Failed to load models:', err))
 
@@ -284,6 +299,8 @@ export function RealtimePage() {
       enableCorrection,
       enableSummary,
       asrEngine: selectedEngine || undefined,
+      diarizationModel: selectedDiarModel || undefined,
+      genderModel: selectedGenderModel || undefined,
     })
 
     setRecording({ isRecording: true })
@@ -417,6 +434,38 @@ export function RealtimePage() {
             </option>
           ))}
           {llmModels.length === 0 && <option>加载中...</option>}
+        </select>
+
+        {/* 说话人分离模型 */}
+        {diarizationModels.length > 0 && (
+          <select
+            value={selectedDiarModel}
+            onChange={(e) => setSelectedDiarModel(e.target.value)}
+            disabled={controlsDisabled}
+            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[180px]"
+            title="说话人分离模型"
+          >
+            {diarizationModels.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.display_name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {/* 性别检测模型 */}
+        <select
+          value={selectedGenderModel}
+          onChange={(e) => setSelectedGenderModel(e.target.value)}
+          disabled={controlsDisabled}
+          className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[180px]"
+          title="性别检测模型"
+        >
+          {genderModels.map((m) => (
+            <option key={m.name} value={m.name}>
+              {m.display_name}
+            </option>
+          ))}
         </select>
 
         {/* 系统音频（未实现占位） */}

@@ -45,6 +45,8 @@ async def create_process_job(
     name: Optional[str] = Form(default=None),  # 自定义会议名称
     whisper_model: str = Form(default="medium"),
     llm_model: Optional[str] = Form(default=None),
+    diarization_model: Optional[str] = Form(default=None),
+    gender_model: Optional[str] = Form(default=None),
     enable_naming: bool = Form(default=True),
     enable_correction: bool = Form(default=True),
     enable_summary: bool = Form(default=True),
@@ -96,6 +98,8 @@ async def create_process_job(
         "options": {
             "whisper_model": whisper_model,
             "llm_model": llm_model,
+            "diarization_model": diarization_model,
+            "gender_model": gender_model,
             "enable_naming": enable_naming,
             "enable_correction": enable_correction,
             "enable_summary": enable_summary,
@@ -202,7 +206,8 @@ def _sync_process_audio(job_id: str) -> dict:
 
     # 3. 说话人分离
     update_progress(0.15, "说话人分离...")
-    diar_service = get_diarization_service()
+    diar_model = options.get("diarization_model")
+    diar_service = get_diarization_service(diar_model)
     diar_result = diar_service.diarize(wav_path)
 
     # 4. 语音转写
@@ -230,7 +235,8 @@ def _sync_process_audio(job_id: str) -> dict:
     if options["enable_naming"]:
         update_progress(0.75, "智能命名...")
         try:
-            gender_map = detect_all_genders(wav_path, final_segments)
+            gender_engine = options.get("gender_model")
+            gender_map = detect_all_genders(wav_path, final_segments, engine_name=gender_engine)
             naming_service = get_naming_service()
             speakers = naming_service.name_speakers(final_segments, gender_map)
         except Exception:

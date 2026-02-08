@@ -19,8 +19,12 @@ interface AppState {
   // 模型
   whisperModels: ModelInfo[]
   llmModels: ModelInfo[]
+  diarizationModels: ModelInfo[]
+  genderModels: ModelInfo[]
   selectedWhisperModel: string
   selectedLlmModel: string
+  selectedDiarizationModel: string
+  selectedGenderModel: string
 
   // 处理选项
   enableNaming: boolean
@@ -65,9 +69,11 @@ interface AppState {
   postProcessStep: string
 
   // Actions
-  setModels: (whisper: ModelInfo[], llm: ModelInfo[]) => void
+  setModels: (whisper: ModelInfo[], llm: ModelInfo[], diarization?: ModelInfo[], gender?: ModelInfo[]) => void
   setSelectedWhisperModel: (model: string) => void
   setSelectedLlmModel: (model: string) => void
+  setSelectedDiarizationModel: (model: string) => void
+  setSelectedGenderModel: (model: string) => void
   setProcessOptions: (options: Partial<{
     enableNaming: boolean
     enableCorrection: boolean
@@ -109,8 +115,12 @@ const initialState = {
   activeTab: 'file' as TabType,
   whisperModels: [],
   llmModels: [],
+  diarizationModels: [],
+  genderModels: [],
   selectedWhisperModel: 'medium',
   selectedLlmModel: 'disabled',
+  selectedDiarizationModel: '',
+  selectedGenderModel: 'f0',
   enableNaming: true,
   enableCorrection: true,
   enableSummary: true,
@@ -146,14 +156,29 @@ const initialState = {
 export const useAppStore = create<AppState>((set) => ({
   ...initialState,
 
-  setModels: (whisper, llm) =>
-    set({ whisperModels: whisper, llmModels: llm }),
+  setModels: (whisper, llm, diarization, gender) =>
+    set((state) => ({
+      whisperModels: whisper,
+      llmModels: llm,
+      diarizationModels: diarization ?? state.diarizationModels,
+      genderModels: gender ?? state.genderModels,
+      // 自动选择第一个可用的说话人分离模型
+      selectedDiarizationModel: diarization && diarization.length > 0 && !state.selectedDiarizationModel
+        ? diarization[0].name
+        : state.selectedDiarizationModel,
+    })),
 
   setSelectedWhisperModel: (model) =>
     set({ selectedWhisperModel: model }),
 
   setSelectedLlmModel: (model) =>
     set({ selectedLlmModel: model }),
+
+  setSelectedDiarizationModel: (model) =>
+    set({ selectedDiarizationModel: model }),
+
+  setSelectedGenderModel: (model) =>
+    set({ selectedGenderModel: model }),
 
   setProcessOptions: (options) =>
     set((state) => ({ ...state, ...options })),

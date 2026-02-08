@@ -71,9 +71,55 @@ async def list_models():
                 size_mb=round(size_mb, 1),
             ))
 
+    # 扫描说话人分离模型
+    diarization_models = []
+    diar_dir = settings.paths.models_dir / "diarization"
+    if diar_dir.exists():
+        for d in sorted(diar_dir.iterdir()):
+            if d.is_dir() and (
+                (d / "config.yaml").exists()       # pyannote 系列
+                or (d / "configuration.json").exists()  # ModelScope / 3D-Speaker 系列
+                or any(d.glob("*.onnx"))           # ONNX 模型
+            ):
+                size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
+                diarization_models.append(ModelInfoResponse(
+                    name=d.name,
+                    display_name=d.name,
+                    path=str(d),
+                    size_mb=round(size_mb, 1),
+                ))
+
+    # 扫描性别检测模型
+    gender_models = [
+        ModelInfoResponse(
+            name="f0",
+            display_name="基频分析 (内置)",
+            path="",
+            size_mb=None,
+        )
+    ]
+    gender_dir = settings.paths.models_dir / "gender"
+    if gender_dir.exists():
+        for d in sorted(gender_dir.iterdir()):
+            if d.is_dir() and (
+                (d / "config.json").exists()
+                or (d / "pytorch_model.bin").exists()
+                or (d / "model.safetensors").exists()
+                or any(d.glob("*.onnx"))
+            ):
+                size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
+                gender_models.append(ModelInfoResponse(
+                    name=d.name,
+                    display_name=d.name,
+                    path=str(d),
+                    size_mb=round(size_mb, 1),
+                ))
+
     return ModelsListResponse(
         whisper_models=whisper_models,
         llm_models=llm_models,
+        diarization_models=diarization_models,
+        gender_models=gender_models,
     )
 
 
@@ -182,6 +228,123 @@ async def delete_llm_model(model_name: str):
         raise HTTPException(status_code=404, detail="模型不存在")
 
     model_path.unlink()
+    return {"status": "ok", "message": f"已删除: {model_name}"}
+
+
+@router.post("/models/upload/diarization")
+async def upload_diarization_model(file: UploadFile = File(...)):
+    """
+    上传说话人分离模型 (压缩包)
+
+    支持: .zip, .tar.gz
+    解压后放入 models/diarization/ 目录
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    if not (file.filename.endswith(".zip") or file.filename.endswith(".tar.gz")):
+        raise HTTPException(status_code=400, detail="只支持 .zip 或 .tar.gz 格式")
+
+    settings = get_settings()
+    diar_dir = settings.paths.models_dir / "diarization"
+    diar_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_path = diar_dir / file.filename
+    try:
+        content = await file.read()
+        temp_path.write_bytes(content)
+
+        model_name = file.filename.replace(".tar.gz", "").replace(".zip", "")
+        extract_dir = diar_dir / model_name
+
+        if file.filename.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        else:
+            import tarfile
+            with tarfile.open(temp_path, 'r:gz') as tf:
+                tf.extractall(extract_dir)
+
+        temp_path.unlink()
+        return {"status": "ok", "model_name": model_name, "path": str(extract_dir)}
+
+    except Exception as e:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+
+
+@router.post("/models/upload/gender")
+async def upload_gender_model(file: UploadFile = File(...)):
+    """
+    上传性别检测模型 (压缩包)
+
+    支持: .zip, .tar.gz
+    解压后放入 models/gender/ 目录
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    if not (file.filename.endswith(".zip") or file.filename.endswith(".tar.gz")):
+        raise HTTPException(status_code=400, detail="只支持 .zip 或 .tar.gz 格式")
+
+    settings = get_settings()
+    gender_dir = settings.paths.models_dir / "gender"
+    gender_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_path = gender_dir / file.filename
+    try:
+        content = await file.read()
+        temp_path.write_bytes(content)
+
+        model_name = file.filename.replace(".tar.gz", "").replace(".zip", "")
+        extract_dir = gender_dir / model_name
+
+        if file.filename.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        else:
+            import tarfile
+            with tarfile.open(temp_path, 'r:gz') as tf:
+                tf.extractall(extract_dir)
+
+        temp_path.unlink()
+        return {"status": "ok", "model_name": model_name, "path": str(extract_dir)}
+
+    except Exception as e:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+
+
+@router.delete("/models/diarization/{model_name}")
+async def delete_diarization_model(model_name: str):
+    """删除说话人分离模型"""
+    settings = get_settings()
+    model_path = settings.paths.models_dir / "diarization" / model_name
+
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail="模型不存在")
+
+    shutil.rmtree(model_path)
+    return {"status": "ok", "message": f"已删除: {model_name}"}
+
+
+@router.delete("/models/gender/{model_name}")
+async def delete_gender_model(model_name: str):
+    """删除性别检测模型"""
+    if model_name == "f0":
+        raise HTTPException(status_code=400, detail="内置模型不可删除")
+
+    settings = get_settings()
+    model_path = settings.paths.models_dir / "gender" / model_name
+
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail="模型不存在")
+
+    shutil.rmtree(model_path)
     return {"status": "ok", "message": f"已删除: {model_name}"}
 
 
