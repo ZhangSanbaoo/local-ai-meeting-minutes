@@ -28,6 +28,7 @@ export interface ProcessResult {
   speakers: Record<string, Speaker>
   summary: string
   audio_url?: string
+  audio_original_url?: string
   duration: number
   output_dir: string
 }

@@ -331,8 +331,11 @@ async def get_job_result(job_id: str):
     # 构建音频 URL
     settings = get_settings()
     relative_path = output_dir.relative_to(settings.paths.output_dir)
-    audio_file = "audio_enhanced.wav" if (output_dir / "audio_enhanced.wav").exists() else "audio_16k.wav"
-    audio_url = f"/files/{relative_path}/{audio_file}"
+    audio_original_url = f"/files/{relative_path}/audio_16k.wav"
+    if (output_dir / "audio_enhanced.wav").exists():
+        audio_url = f"/files/{relative_path}/audio_enhanced.wav"
+    else:
+        audio_url = audio_original_url
 
     # 构建响应
     segments = [
@@ -365,6 +368,7 @@ async def get_job_result(job_id: str):
         speakers=speakers,
         summary=result.get("summary", ""),
         audio_url=audio_url,
+        audio_original_url=audio_original_url,
         duration=result.get("duration", 0),
         output_dir=str(output_dir.name),
     )

@@ -127,6 +127,7 @@ class ProcessResultResponse(BaseModel):
     speakers: dict[str, SpeakerResponse] = {}
     summary: str = ""
     audio_url: Optional[str] = None
+    audio_original_url: Optional[str] = None
     duration: float = 0
     output_dir: str = ""
 

@@ -110,15 +110,18 @@ async def get_history_item(history_id: str):
         duration = max(seg.get("end", 0) for seg in segments_data)
 
     # 构建音频 URL - 检查多种可能的文件名
-    if (output_dir / "audio_enhanced.wav").exists():
-        audio_file = "audio_enhanced.wav"
-    elif (output_dir / "audio_16k.wav").exists():
-        audio_file = "audio_16k.wav"
+    # 原始音频
+    if (output_dir / "audio_16k.wav").exists():
+        audio_original_url = f"/files/{history_id}/audio_16k.wav"
     elif (output_dir / "recording.wav").exists():
-        audio_file = "recording.wav"  # 实时录音
+        audio_original_url = f"/files/{history_id}/recording.wav"
     else:
-        audio_file = "audio_16k.wav"  # 默认
-    audio_url = f"/files/{history_id}/{audio_file}"
+        audio_original_url = f"/files/{history_id}/audio_16k.wav"
+    # 增强音频（如果有）
+    if (output_dir / "audio_enhanced.wav").exists():
+        audio_url = f"/files/{history_id}/audio_enhanced.wav"
+    else:
+        audio_url = audio_original_url
 
     # 构建响应
     segments = [
@@ -151,6 +154,7 @@ async def get_history_item(history_id: str):
         speakers=speakers,
         summary=summary,
         audio_url=audio_url,
+        audio_original_url=audio_original_url,
         duration=duration,
         output_dir=history_id,
     )

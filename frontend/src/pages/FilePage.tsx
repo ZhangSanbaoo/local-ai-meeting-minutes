@@ -46,6 +46,9 @@ export function FilePage() {
     speakers,
     summary,
     audioUrl,
+    audioOriginalUrl,
+    useOriginalAudio,
+    toggleAudioSource,
     setResult,
     updateSegmentText,
     updateSpeakerName,
@@ -620,8 +623,25 @@ export function FilePage() {
 
           {/* 音频播放器 */}
           <div className="mt-2">
+            {audioOriginalUrl && audioUrl && audioOriginalUrl !== audioUrl && (
+              <div className="flex items-center gap-2 mb-1 px-1">
+                <button
+                  onClick={toggleAudioSource}
+                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                    useOriginalAudio
+                      ? 'border-gray-400 bg-gray-100 text-gray-700'
+                      : 'border-blue-400 bg-blue-50 text-blue-700'
+                  }`}
+                >
+                  {useOriginalAudio ? '原始音频' : '增强音频'}
+                </button>
+                <span className="text-xs text-gray-400">
+                  点击切换
+                </span>
+              </div>
+            )}
             <AudioPlayer
-              src={audioUrl}
+              src={useOriginalAudio ? audioOriginalUrl : audioUrl}
               onTimeUpdate={handleTimeUpdate}
               onPlayStateChange={(playing) => setPlayback({ isPlaying: playing })}
               seekTo={seekRequest?.time ?? null}

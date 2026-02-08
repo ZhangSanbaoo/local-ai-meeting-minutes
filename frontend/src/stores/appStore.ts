@@ -40,6 +40,8 @@ interface AppState {
   speakers: Record<string, Speaker>
   summary: string
   audioUrl: string | null
+  audioOriginalUrl: string | null
+  useOriginalAudio: boolean
   duration: number
 
   // 播放状态
@@ -76,6 +78,7 @@ interface AppState {
   setProcessing: (processing: boolean) => void
   setProgress: (progress: number, message: string) => void
   setResult: (result: ProcessResult | null) => void
+  toggleAudioSource: () => void
   updateSegmentText: (segmentId: number, text: string) => void
   updateSpeakerName: (speakerId: string, name: string) => void
   updateSummary: (summary: string) => void
@@ -121,6 +124,8 @@ const initialState = {
   speakers: {},
   summary: '',
   audioUrl: null,
+  audioOriginalUrl: null,
+  useOriginalAudio: false,
   duration: 0,
   isPlaying: false,
   currentTime: 0,
@@ -169,8 +174,13 @@ export const useAppStore = create<AppState>((set) => ({
       speakers: result?.speakers ?? {},
       summary: result?.summary ?? '',
       audioUrl: result?.audio_url ?? null,
+      audioOriginalUrl: result?.audio_original_url ?? null,
+      useOriginalAudio: false,
       duration: result?.duration ?? 0,
     }),
+
+  toggleAudioSource: () =>
+    set((state) => ({ useOriginalAudio: !state.useOriginalAudio })),
 
   updateSegmentText: (segmentId, text) =>
     set((state) => ({
@@ -251,6 +261,8 @@ export const useAppStore = create<AppState>((set) => ({
       speakers: {},
       summary: '',
       audioUrl: null,
+      audioOriginalUrl: null,
+      useOriginalAudio: false,
       duration: 0,
       isPlaying: false,
       currentTime: 0,

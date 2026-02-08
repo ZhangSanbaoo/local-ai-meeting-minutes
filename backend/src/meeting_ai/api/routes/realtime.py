@@ -641,7 +641,9 @@ async def _post_process_recording(
             diar_result,
         )
         fixed = fix_unknown_speakers(aligned)
-        merged = merge_adjacent_segments(fixed)
+        # 实时录音：保留 ASR 引擎的语义分段，只合并极短间隔（<50ms）的同说话人片段
+        # 文件处理用默认 max_gap=0.3s（见 process.py）
+        merged = merge_adjacent_segments(fixed, max_gap=0.05)
 
         await send_json(ws, {
             "type": "post_progress",
