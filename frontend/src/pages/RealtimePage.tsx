@@ -12,7 +12,7 @@ import {
 } from '../hooks/useRealtimeWebSocket'
 import { useRecordingTimer } from '../hooks/useRecordingTimer'
 import { ProgressBar } from '../components/ProgressBar'
-import { getStreamingEngines, getModels } from '../api/client'
+import { getStreamingEngines, getModels, getAudioDevices } from '../api/client'
 import type { ModelInfo, RealtimeSegment, StreamingEngine } from '../types'
 
 export function RealtimePage() {
@@ -25,6 +25,7 @@ export function RealtimePage() {
   // Microphone devices (from browser API)
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedMicId, setSelectedMicId] = useState('default')
+  const [defaultMicName, setDefaultMicName] = useState<string | null>(null)
 
   // LLM models
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
@@ -60,6 +61,15 @@ export function RealtimePage() {
         }
       })
       .catch((err) => console.error('Failed to enumerate devices:', err))
+
+    // Get default mic name from backend (sounddevice has better device info)
+    getAudioDevices()
+      .then((res) => {
+        if (res.default_input) {
+          setDefaultMicName(res.default_input)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   // ── Store ──
@@ -431,9 +441,11 @@ export function RealtimePage() {
             value={selectedMicId}
             onChange={(e) => setSelectedMicId(e.target.value)}
             disabled={controlsDisabled}
-            className="px-2 py-2 border border-gray-300 rounded text-sm max-w-[180px] disabled:bg-gray-200 disabled:cursor-not-allowed"
+            className="px-2 py-2 border border-gray-300 rounded text-sm max-w-[280px] disabled:bg-gray-200 disabled:cursor-not-allowed"
           >
-            <option value="default">默认麦克风</option>
+            <option value="default">
+              {defaultMicName ? `默认 (${defaultMicName})` : '默认麦克风'}
+            </option>
             {micDevices.filter(d => d.deviceId !== 'default').map((d) => (
               <option key={d.deviceId} value={d.deviceId}>
                 {d.label || `麦克风 ${d.deviceId.slice(0, 8)}`}

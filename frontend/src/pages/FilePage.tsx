@@ -625,19 +625,29 @@ export function FilePage() {
           <div className="mt-2">
             {audioOriginalUrl && audioUrl && audioOriginalUrl !== audioUrl && (
               <div className="flex items-center gap-2 mb-1 px-1">
-                <button
-                  onClick={toggleAudioSource}
-                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                    useOriginalAudio
-                      ? 'border-gray-400 bg-gray-100 text-gray-700'
-                      : 'border-blue-400 bg-blue-50 text-blue-700'
-                  }`}
-                >
-                  {useOriginalAudio ? '原始音频' : '增强音频'}
-                </button>
-                <span className="text-xs text-gray-400">
-                  点击切换
-                </span>
+                <span className="text-xs text-gray-500 mr-0.5">播放:</span>
+                <div className="inline-flex rounded border border-gray-300 overflow-hidden">
+                  <button
+                    onClick={() => { if (useOriginalAudio) toggleAudioSource() }}
+                    className={`text-xs px-2.5 py-1 transition-colors ${
+                      !useOriginalAudio
+                        ? 'bg-blue-500 text-white font-medium'
+                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    增强音频
+                  </button>
+                  <button
+                    onClick={() => { if (!useOriginalAudio) toggleAudioSource() }}
+                    className={`text-xs px-2.5 py-1 border-l border-gray-300 transition-colors ${
+                      useOriginalAudio
+                        ? 'bg-blue-500 text-white font-medium'
+                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    原始音频
+                  </button>
+                </div>
               </div>
             )}
             <AudioPlayer

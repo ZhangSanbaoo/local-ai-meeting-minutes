@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { Edit2, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 
@@ -9,6 +10,24 @@ interface SummaryPanelProps {
 }
 
 export function SummaryPanel({ summary, onEdit, onRegenerate, isRegenerating }: SummaryPanelProps) {
+  const [elapsed, setElapsed] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (isRegenerating) {
+      setElapsed(0)
+      timerRef.current = setInterval(() => setElapsed((t) => t + 1), 1000)
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [isRegenerating])
+
   return (
     <div className="flex flex-col h-full">
       {/* 标题栏 */}
@@ -37,6 +56,16 @@ export function SummaryPanel({ summary, onEdit, onRegenerate, isRegenerating }: 
           </button>
         </div>
       </div>
+
+      {/* 重新生成进度提示 */}
+      {isRegenerating && (
+        <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+          <RefreshCw className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+          <span className="text-sm text-blue-700">
+            正在重新生成总结... ({elapsed}s)
+          </span>
+        </div>
+      )}
 
       {/* 内容区 */}
       <div className="flex-1 border border-gray-300 rounded-lg p-4 bg-white overflow-auto">
