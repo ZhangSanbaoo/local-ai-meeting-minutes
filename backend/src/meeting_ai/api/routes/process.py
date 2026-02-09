@@ -4,12 +4,17 @@
 
 import asyncio
 import json
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
+
+logger = logging.getLogger("meeting_ai.api.routes.process")
 
 from meeting_ai.api.schemas import (
     EnhanceMode,
@@ -43,7 +48,8 @@ async def create_process_job(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     name: Optional[str] = Form(default=None),  # 自定义会议名称
-    whisper_model: str = Form(default="medium"),
+    asr_model: Optional[str] = Form(default=None),  # 统一 ASR 模型（新）
+    whisper_model: str = Form(default="medium"),     # 向后兼容
     llm_model: Optional[str] = Form(default=None),
     diarization_model: Optional[str] = Form(default=None),
     gender_model: Optional[str] = Form(default=None),
@@ -96,7 +102,8 @@ async def create_process_job(
         "output_dir": str(output_dir),
         "upload_path": str(upload_path),
         "options": {
-            "whisper_model": whisper_model,
+            "asr_model": asr_model or whisper_model,  # 优先用 asr_model
+            "whisper_model": whisper_model,            # 向后兼容
             "llm_model": llm_model,
             "diarization_model": diarization_model,
             "gender_model": gender_model,
@@ -158,7 +165,7 @@ def _sync_process_audio(job_id: str) -> dict:
     # 导入处理模块
     from meeting_ai.config import get_settings
     from meeting_ai.utils.audio import ensure_wav_16k_mono
-    from meeting_ai.services import get_diarization_service, get_asr_service
+    from meeting_ai.services import get_diarization_service, get_asr_engine
     from meeting_ai.services.alignment import (
         align_transcript_with_speakers,
         fix_unknown_speakers,
@@ -172,138 +179,282 @@ def _sync_process_audio(job_id: str) -> dict:
 
     settings = get_settings()
 
-    # 配置模型
-    settings.asr.model_name = options["whisper_model"]
-    use_llm = options["llm_model"] and options["llm_model"] != "disabled"
-    if use_llm:
-        settings.llm.enabled = True
-        # 前端传的是模型名称，需要补全路径: llm/{model_name}.gguf
-        llm_model_name = options["llm_model"]
-        if not llm_model_name.endswith(".gguf"):
-            llm_model_name = f"{llm_model_name}.gguf"
-        if not llm_model_name.startswith("llm/") and not llm_model_name.startswith("llm\\"):
-            llm_model_name = f"llm/{llm_model_name}"
-        settings.llm.model_path = Path(llm_model_name)
-    else:
-        settings.llm.enabled = False
+    # ============================================================
+    # 日志捕获：将处理过程中的所有 meeting_ai.* 日志写入文件
+    # ============================================================
+    log_path = output_dir / "process.log"
+    file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    ))
+    root_log = logging.getLogger("meeting_ai")
+    root_log.addHandler(file_handler)
 
-    # 1. 转换音频格式
-    update_progress(0.05, "转换音频格式...")
-    wav_path = output_dir / "audio_16k.wav"
-    ensure_wav_16k_mono(upload_path, wav_path)
+    step_times: dict[str, float] = {}
+    pipeline_start = time.time()
 
-    # 2. 音频增强
-    enhance_mode = options.get("enhance_mode", "none")
-    if enhance_mode and enhance_mode != "none":
-        update_progress(0.10, "音频增强...")
+    def save_debug(name: str, data):
+        """保存中间结果到 output 目录"""
         try:
-            from meeting_ai.utils.enhance import enhance_audio
-            enhanced_path = output_dir / "audio_enhanced.wav"
-            enhance_audio(wav_path, enhanced_path, mode=enhance_mode)
-            wav_path = enhanced_path
-        except ImportError:
-            pass
-
-    # 3. 说话人分离
-    update_progress(0.15, "说话人分离...")
-    diar_model = options.get("diarization_model")
-    diar_service = get_diarization_service(diar_model)
-    diar_result = diar_service.diarize(wav_path)
-
-    # 4. 语音转写
-    update_progress(0.40, "语音转写...")
-    asr_service = get_asr_service()
-    asr_result = asr_service.transcribe(wav_path)
-
-    # 5. 对齐
-    update_progress(0.55, "对齐说话人...")
-    aligned_segments = align_transcript_with_speakers(asr_result, diar_result)
-    fixed_segments = fix_unknown_speakers(aligned_segments)
-    # 合并相邻片段，但停顿超过0.3秒则分段
-    final_segments = merge_adjacent_segments(fixed_segments, max_gap=0.3)
-
-    # 6. 错别字校正
-    if options["enable_correction"] and use_llm:
-        update_progress(0.65, "错别字校正...")
-        try:
-            final_segments = correct_segments(final_segments)
-        except Exception:
-            pass
-
-    # 7. 智能命名
-    speakers = {}
-    if options["enable_naming"]:
-        update_progress(0.75, "智能命名...")
-        try:
-            gender_engine = options.get("gender_model")
-            gender_map = detect_all_genders(wav_path, final_segments, engine_name=gender_engine)
-            naming_service = get_naming_service()
-            speakers = naming_service.name_speakers(final_segments, gender_map)
-        except Exception:
-            pass
-
-    # 默认说话人信息
-    if not speakers:
-        speaker_ids = set(seg.speaker for seg in final_segments if seg.speaker)
-        for spk_id in speaker_ids:
-            total_dur = sum(seg.duration for seg in final_segments if seg.speaker == spk_id)
-            seg_count = sum(1 for seg in final_segments if seg.speaker == spk_id)
-            speakers[spk_id] = SpeakerInfo(
-                id=spk_id,
-                display_name=spk_id,
-                total_duration=total_dur,
-                segment_count=seg_count,
+            (output_dir / f"debug_{name}.json").write_text(
+                json.dumps(data, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
             )
-
-    # 8. 会议总结
-    summary_md = ""
-    if options["enable_summary"] and use_llm:
-        update_progress(0.85, "生成总结...")
-        try:
-            summary_obj = summarize_meeting(final_segments, speakers, duration=asr_result.duration)
-            if summary_obj:
-                summary_md = format_summary_markdown(summary_obj, speakers, duration=asr_result.duration)
         except Exception:
-            summary_md = "*总结生成失败*"
+            pass
 
-    # 9. 保存结果
-    update_progress(0.95, "保存结果...")
-    segments_data = [s.model_dump() for s in final_segments]
-    speakers_data = {k: v.model_dump() for k, v in speakers.items()}
+    try:
+        # 配置模型
+        asr_model_name = options.get("asr_model") or options.get("whisper_model", "medium")
+        use_llm = options["llm_model"] and options["llm_model"] != "disabled"
+        if use_llm:
+            settings.llm.enabled = True
+            llm_model_name = options["llm_model"]
+            if not llm_model_name.endswith(".gguf"):
+                llm_model_name = f"{llm_model_name}.gguf"
+            if not llm_model_name.startswith("llm/") and not llm_model_name.startswith("llm\\"):
+                llm_model_name = f"llm/{llm_model_name}"
+            settings.llm.model_path = Path(llm_model_name)
+        else:
+            settings.llm.enabled = False
 
-    result_data = {
-        "speakers": speakers_data,
-        "segments": segments_data,
-        "speaker_count": len(speakers),
-    }
-    (output_dir / "result.json").write_text(
-        json.dumps(result_data, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
+        # 保存选项快照
+        save_debug("0_pipeline_options", {
+            "options": options,
+            "models_used": {
+                "asr": asr_model_name,
+                "diarization": options.get("diarization_model") or "default",
+                "gender": options.get("gender_model") or "default",
+                "llm": options.get("llm_model") or "disabled",
+            },
+        })
 
-    # 保存文本
-    lines = []
-    for seg in segments_data:
-        sid = seg.get("speaker", "UNKNOWN")
-        name = speakers_data.get(sid, {}).get("display_name", sid)
-        start = seg.get("start", 0)
-        end = seg.get("end", 0)
-        text = seg.get("text", "")
-        lines.append(f"[{int(start//60):02d}:{int(start%60):02d}-{int(end//60):02d}:{int(end%60):02d}] {name}: {text}")
-    (output_dir / "result.txt").write_text("\n".join(lines), encoding="utf-8")
+        # ── 1. 转换音频格式 ──
+        update_progress(0.05, "转换音频格式...")
+        t0 = time.time()
+        wav_path = output_dir / "audio_16k.wav"
+        ensure_wav_16k_mono(upload_path, wav_path)
+        step_times["1_audio_convert"] = time.time() - t0
 
-    # 保存总结
-    if summary_md:
-        (output_dir / "summary.md").write_text(summary_md, encoding="utf-8")
+        # ── 2. 音频增强 ──
+        enhance_mode = options.get("enhance_mode", "none")
+        if enhance_mode and enhance_mode != "none":
+            update_progress(0.10, "音频增强...")
+            t0 = time.time()
+            try:
+                from meeting_ai.utils.enhance import enhance_audio
+                enhanced_path = output_dir / "audio_enhanced.wav"
+                enhance_audio(wav_path, enhanced_path, mode=enhance_mode)
+                wav_path = enhanced_path
+            except ImportError:
+                pass
+            step_times["2_enhance"] = time.time() - t0
 
-    # 返回结果
-    return {
-        "segments": segments_data,
-        "speakers": speakers_data,
-        "summary": summary_md,
-        "duration": asr_result.duration,
-        "audio_path": str(wav_path),
-    }
+        # ── 3. 说话人分离 ──
+        update_progress(0.15, "说话人分离...")
+        t0 = time.time()
+        diar_model = options.get("diarization_model")
+        diar_service = get_diarization_service(diar_model)
+        diar_result = diar_service.diarize(wav_path)
+        step_times["3_diarization"] = time.time() - t0
+
+        diar_speakers = sorted(set(s.speaker for s in diar_result.segments if s.speaker))
+        save_debug("1_diarization", {
+            "speaker_count": len(diar_speakers),
+            "speakers": diar_speakers,
+            "segment_count": len(diar_result.segments),
+            "segments": [
+                {"start": round(s.start, 3), "end": round(s.end, 3), "speaker": s.speaker}
+                for s in diar_result.segments
+            ],
+        })
+
+        # ── 4. 语音转写 ──
+        update_progress(0.40, "语音转写...")
+        t0 = time.time()
+        asr_engine = get_asr_engine(asr_model_name)
+        asr_result = asr_engine.transcribe(wav_path)
+        step_times["4_asr"] = time.time() - t0
+
+        save_debug("2_asr", {
+            "duration": asr_result.duration,
+            "segment_count": len(asr_result.segments),
+            "segments": [
+                {"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text}
+                for s in asr_result.segments
+            ],
+        })
+
+        # ── 5. 对齐 ──
+        update_progress(0.55, "对齐说话人...")
+        t0 = time.time()
+        aligned_segments = align_transcript_with_speakers(asr_result, diar_result)
+        step_times["5a_alignment"] = time.time() - t0
+
+        save_debug("3_aligned", [
+            {"id": s.id, "start": round(s.start, 3), "end": round(s.end, 3),
+             "text": s.text, "speaker": s.speaker}
+            for s in aligned_segments
+        ])
+
+        t0 = time.time()
+        fixed_segments = fix_unknown_speakers(aligned_segments)
+        step_times["5b_fix_unknown"] = time.time() - t0
+
+        save_debug("4_fixed", [
+            {"id": s.id, "start": round(s.start, 3), "end": round(s.end, 3),
+             "text": s.text, "speaker": s.speaker}
+            for s in fixed_segments
+        ])
+
+        t0 = time.time()
+        final_segments = merge_adjacent_segments(fixed_segments, max_gap=0.3)
+        step_times["5c_merge"] = time.time() - t0
+
+        save_debug("5_merged", [
+            {"id": s.id, "start": round(s.start, 3), "end": round(s.end, 3),
+             "text": s.text, "speaker": s.speaker}
+            for s in final_segments
+        ])
+
+        # ── 6. 错别字校正 ──
+        if options["enable_correction"] and use_llm:
+            update_progress(0.65, "错别字校正...")
+            t0 = time.time()
+            try:
+                final_segments = correct_segments(final_segments)
+            except Exception as e:
+                logger.warning(f"错别字校正失败: {e}")
+            step_times["6_correction"] = time.time() - t0
+
+        # ── 7. 智能命名 ──
+        speakers = {}
+        gender_map = {}
+        if options["enable_naming"]:
+            update_progress(0.75, "智能命名...")
+
+            # 7a. 性别检测
+            t0 = time.time()
+            try:
+                gender_engine = options.get("gender_model")
+                gender_map = detect_all_genders(wav_path, final_segments, engine_name=gender_engine)
+            except Exception as e:
+                logger.warning(f"性别检测失败（回退空性别信息）: {e}")
+            step_times["7a_gender"] = time.time() - t0
+
+            save_debug("6_gender", {
+                spk: {"gender": g.value, "metric": round(m, 4)}
+                for spk, (g, m) in gender_map.items()
+            })
+
+            # 7b. 智能命名
+            t0 = time.time()
+            try:
+                naming_service = get_naming_service()
+                speakers = naming_service.name_speakers(final_segments, gender_map)
+            except Exception as e:
+                logger.warning(f"智能命名失败: {e}")
+            step_times["7b_naming"] = time.time() - t0
+
+            save_debug("7_naming", {
+                spk: info.model_dump() for spk, info in speakers.items()
+            } if speakers else {})
+
+        # 默认说话人信息
+        if not speakers:
+            speaker_ids = set(seg.speaker for seg in final_segments if seg.speaker)
+            for spk_id in speaker_ids:
+                total_dur = sum(seg.duration for seg in final_segments if seg.speaker == spk_id)
+                seg_count = sum(1 for seg in final_segments if seg.speaker == spk_id)
+                speakers[spk_id] = SpeakerInfo(
+                    id=spk_id,
+                    display_name=spk_id,
+                    total_duration=total_dur,
+                    segment_count=seg_count,
+                )
+
+        # ── 8. 会议总结 ──
+        summary_md = ""
+        if options["enable_summary"] and use_llm:
+            update_progress(0.85, "生成总结...")
+            t0 = time.time()
+            try:
+                summary_obj = summarize_meeting(final_segments, speakers, duration=asr_result.duration)
+                if summary_obj:
+                    summary_md = format_summary_markdown(summary_obj, speakers, duration=asr_result.duration)
+            except Exception as e:
+                logger.warning(f"会议总结生成失败: {e}")
+                summary_md = "*总结生成失败*"
+            step_times["8_summary"] = time.time() - t0
+
+        # ── 9. 保存结果 ──
+        update_progress(0.95, "保存结果...")
+        segments_data = [s.model_dump() for s in final_segments]
+        speakers_data = {k: v.model_dump() for k, v in speakers.items()}
+
+        result_data = {
+            "speakers": speakers_data,
+            "segments": segments_data,
+            "speaker_count": len(speakers),
+        }
+        (output_dir / "result.json").write_text(
+            json.dumps(result_data, ensure_ascii=False, indent=2),
+            encoding="utf-8"
+        )
+
+        # 保存文本
+        lines = []
+        for seg in segments_data:
+            sid = seg.get("speaker", "UNKNOWN")
+            name = speakers_data.get(sid, {}).get("display_name", sid)
+            start = seg.get("start", 0)
+            end = seg.get("end", 0)
+            text = seg.get("text", "")
+            lines.append(f"[{int(start//60):02d}:{int(start%60):02d}-{int(end//60):02d}:{int(end%60):02d}] {name}: {text}")
+        (output_dir / "result.txt").write_text("\n".join(lines), encoding="utf-8")
+
+        # 保存总结
+        if summary_md:
+            (output_dir / "summary.md").write_text(summary_md, encoding="utf-8")
+
+        # ── 保存管线统计 ──
+        step_times["total"] = time.time() - pipeline_start
+        save_debug("0_pipeline_info", {
+            "options": options,
+            "models_used": {
+                "asr": asr_model_name,
+                "diarization": diar_model or "default",
+                "gender": options.get("gender_model") or "default",
+                "llm": options.get("llm_model") or "disabled",
+                "enhance": enhance_mode,
+            },
+            "timing_seconds": {k: round(v, 2) for k, v in step_times.items()},
+            "result_stats": {
+                "diarization_speakers": len(diar_speakers),
+                "asr_segments": len(asr_result.segments),
+                "aligned_segments": len(aligned_segments),
+                "fixed_segments": len(fixed_segments),
+                "final_segments": len(final_segments),
+                "speakers_named": len(speakers),
+                "duration": asr_result.duration,
+            },
+        })
+
+        # 返回结果
+        return {
+            "segments": segments_data,
+            "speakers": speakers_data,
+            "summary": summary_md,
+            "duration": asr_result.duration,
+            "audio_path": str(wav_path),
+        }
+
+    finally:
+        # 确保日志 handler 被清理
+        root_log.removeHandler(file_handler)
+        file_handler.close()
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)

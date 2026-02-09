@@ -5,7 +5,14 @@ from .alignment import (
     fix_unknown_speakers,
     merge_adjacent_segments,
 )
-from .asr import ASRService, get_asr_service
+from .asr import (
+    ASREngine,
+    ASRService,
+    get_asr_engine,
+    get_asr_service,
+    unload_punc_model,
+    unload_vad_model,
+)
 from .correction import correct_segments, correct_text, correct_transcript_batch
 from .diarization import DiarizationService, get_diarization_service
 from .gender import detect_all_genders, detect_gender
@@ -24,8 +31,12 @@ __all__ = [
     "DiarizationService",
     "get_diarization_service",
     # ASR
+    "ASREngine",
     "ASRService",
+    "get_asr_engine",
     "get_asr_service",
+    "unload_vad_model",
+    "unload_punc_model",
     # Alignment
     "align_transcript_with_speakers",
     "fix_unknown_speakers",

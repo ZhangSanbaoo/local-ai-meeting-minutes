@@ -353,6 +353,8 @@ class NamingService:
             role_counters[role] += 1
             return f"{role}{role_counters[role]:02d}"
         
+        used_names = set()  # 防止两个说话人获得相同名字
+
         for speaker_id in sorted(speakers):
             gender, f0_median = gender_map.get(speaker_id, (Gender.UNKNOWN, 0.0))
             
@@ -368,7 +370,7 @@ class NamingService:
             for seg in speaker_segments:
                 if seg.text:
                     self_name = extract_self_intro_name(seg.text)
-                    if self_name and is_name_in_text(self_name, all_text):
+                    if self_name and is_name_in_text(self_name, all_text) and self_name not in used_names:
                         display_name = self_name
                         kind = NameKind.NAME
                         confidence = 0.95  # 自我介绍置信度最高
@@ -386,7 +388,7 @@ class NamingService:
                     if is_name_in_text(name, all_text):
                         # 判断：如果第一个说话人说了"小柔，..."，那小柔是另一个人
                         if first_speaker and speaker_id != first_speaker:
-                            if name in first_segments_text:
+                            if name in first_segments_text and name not in used_names:
                                 display_name = name
                                 kind = NameKind.NAME
                                 confidence = 0.85
@@ -404,7 +406,8 @@ class NamingService:
                 # 只接受 LLM 的"名字"类型（不是角色）
                 if llm_kind == "name" and llm_name:
                     if (is_name_in_text(llm_name, all_text)
-                        and llm_confidence >= self._settings.confidence_threshold):
+                        and llm_confidence >= self._settings.confidence_threshold
+                        and llm_name not in used_names):
                         display_name = llm_name
                         kind = NameKind.NAME
                         confidence = llm_confidence
@@ -451,6 +454,10 @@ class NamingService:
                 confidence = 0.3
                 evidence = [f"基频 {f0_median:.1f}Hz"] if f0_median > 0 else []
             
+            # 记录已使用的名字，防止重复分配
+            if kind == NameKind.NAME:
+                used_names.add(display_name)
+
             # 构建 SpeakerInfo
             total_duration = sum(seg.duration for seg in segments if seg.speaker == speaker_id)
             segment_count = sum(1 for seg in segments if seg.speaker == speaker_id)

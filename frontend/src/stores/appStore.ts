@@ -17,11 +17,11 @@ interface AppState {
   activeTab: TabType
 
   // 模型
-  whisperModels: ModelInfo[]
+  asrModels: ModelInfo[]
   llmModels: ModelInfo[]
   diarizationModels: ModelInfo[]
   genderModels: ModelInfo[]
-  selectedWhisperModel: string
+  selectedAsrModel: string
   selectedLlmModel: string
   selectedDiarizationModel: string
   selectedGenderModel: string
@@ -69,8 +69,8 @@ interface AppState {
   postProcessStep: string
 
   // Actions
-  setModels: (whisper: ModelInfo[], llm: ModelInfo[], diarization?: ModelInfo[], gender?: ModelInfo[]) => void
-  setSelectedWhisperModel: (model: string) => void
+  setModels: (asr: ModelInfo[], llm: ModelInfo[], diarization?: ModelInfo[], gender?: ModelInfo[]) => void
+  setSelectedAsrModel: (model: string) => void
   setSelectedLlmModel: (model: string) => void
   setSelectedDiarizationModel: (model: string) => void
   setSelectedGenderModel: (model: string) => void
@@ -113,11 +113,11 @@ interface AppState {
 
 const initialState = {
   activeTab: 'file' as TabType,
-  whisperModels: [],
+  asrModels: [],
   llmModels: [],
   diarizationModels: [],
   genderModels: [],
-  selectedWhisperModel: 'medium',
+  selectedAsrModel: 'medium',
   selectedLlmModel: 'disabled',
   selectedDiarizationModel: '',
   selectedGenderModel: 'f0',
@@ -156,9 +156,9 @@ const initialState = {
 export const useAppStore = create<AppState>((set) => ({
   ...initialState,
 
-  setModels: (whisper, llm, diarization, gender) =>
+  setModels: (asr, llm, diarization, gender) =>
     set((state) => ({
-      whisperModels: whisper,
+      asrModels: asr,
       llmModels: llm,
       diarizationModels: diarization ?? state.diarizationModels,
       genderModels: gender ?? state.genderModels,
@@ -168,8 +168,8 @@ export const useAppStore = create<AppState>((set) => ({
         : state.selectedDiarizationModel,
     })),
 
-  setSelectedWhisperModel: (model) =>
-    set({ selectedWhisperModel: model }),
+  setSelectedAsrModel: (model) =>
+    set({ selectedAsrModel: model }),
 
   setSelectedLlmModel: (model) =>
     set({ selectedLlmModel: model }),

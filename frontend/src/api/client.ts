@@ -31,6 +31,20 @@ export async function uploadWhisperModel(file: File): Promise<{ status: string; 
   return data
 }
 
+export async function uploadAsrModel(file: File): Promise<{ status: string; model_name: string; path: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await client.post('/models/upload/asr', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+  })
+  return data
+}
+
+export async function deleteAsrModel(modelName: string): Promise<void> {
+  await client.delete(`/models/asr/${modelName}`)
+}
+
 export async function uploadLlmModel(file: File): Promise<{ status: string; model_name: string; path: string }> {
   const formData = new FormData()
   formData.append('file', file)
@@ -116,7 +130,7 @@ export async function uploadAndProcess(
   file: File,
   options: {
     name?: string  // 自定义会议名称
-    whisper_model: string
+    asr_model: string
     llm_model?: string
     diarization_model?: string
     gender_model?: string
@@ -131,7 +145,7 @@ export async function uploadAndProcess(
   if (options.name) {
     formData.append('name', options.name)
   }
-  formData.append('whisper_model', options.whisper_model)
+  formData.append('asr_model', options.asr_model)
   if (options.llm_model) {
     formData.append('llm_model', options.llm_model)
   }

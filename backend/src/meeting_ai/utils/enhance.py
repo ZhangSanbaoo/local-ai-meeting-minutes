@@ -130,7 +130,9 @@ def separate_vocals(audio: np.ndarray, sample_rate: int) -> np.ndarray:
         audio_44k = _resample(audio, sample_rate, 44100)
 
         # 转换为 tensor: (batch, channels, samples)
+        # Demucs htdemucs 需要立体声 (2 channels)，单声道需要复制为双通道
         wav = torch.tensor(audio_44k, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        wav = wav.expand(-1, 2, -1).clone()  # (1, 1, N) → (1, 2, N)
         if torch.cuda.is_available():
             wav = wav.cuda()
 
@@ -297,27 +299,42 @@ def enhance_clarity(audio: np.ndarray, sample_rate: int) -> np.ndarray:
     模型权重自动下载到 HuggingFace cache
     """
     try:
+        import sys
+        import pathlib
         import torch
-        from resemble_enhance.enhancer.inference import enhance as resemble_enhance
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # resemble-enhance 模型权重用 pickle 序列化，内含 PosixPath 对象
+        # Windows 上 PosixPath 无法实例化，需要在整个 import + 推理期间 patch
+        _posix_patched = False
+        if sys.platform == "win32":
+            pathlib.PosixPath = pathlib.WindowsPath
+            _posix_patched = True
 
-        # 转换为 1D torch tensor
-        audio_tensor = torch.from_numpy(audio).float()
+        try:
+            from resemble_enhance.enhancer.inference import enhance as resemble_enhance
 
-        logger.info(f"Resemble Enhance 语音清晰化开始 (device={device})...")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # enhance() 内部会自动下载模型、处理 resample、分块推理
-        # 返回 (enhanced_wav, sr) — enhanced_wav 是 CPU tensor
-        enhanced, new_sr = resemble_enhance(
-            dwav=audio_tensor,
-            sr=sample_rate,
-            device=device,
-            nfe=32,             # CFM 采样步数 (默认 32, 速度/质量平衡)
-            solver="midpoint",  # ODE solver
-            lambd=0.9,          # 降噪程度 (0=纯增强, 1=最大降噪)
-            tau=0.5,            # CFM 温度 (0=保守, 1=最大增强)
-        )
+            # 转换为 1D torch tensor
+            audio_tensor = torch.from_numpy(audio).float()
+
+            logger.info(f"Resemble Enhance 语音清晰化开始 (device={device})...")
+
+            # enhance() 内部会自动下载模型、处理 resample、分块推理
+            # 返回 (enhanced_wav, sr) — enhanced_wav 是 CPU tensor
+            enhanced, new_sr = resemble_enhance(
+                dwav=audio_tensor,
+                sr=sample_rate,
+                device=device,
+                nfe=32,             # CFM 采样步数 (默认 32, 速度/质量平衡)
+                solver="midpoint",  # ODE solver
+                lambd=0.9,          # 降噪程度 (0=纯增强, 1=最大降噪)
+                tau=0.5,            # CFM 温度 (0=保守, 1=最大增强)
+            )
+        finally:
+            # 恢复 PosixPath（无论成功还是失败）
+            if _posix_patched:
+                pathlib.PosixPath = type('PosixPath', (pathlib.PurePosixPath,), {})
 
         result = enhanced.cpu().numpy()
 

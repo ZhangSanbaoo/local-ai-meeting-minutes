@@ -189,6 +189,250 @@ from ..models import DiarizationResult, Segment, SpeakerInfo
 logger = get_logger("services.diarization")
 
 
+class _3DSpeakerDiarizer:
+    """
+    使用 CAM++ 说话人嵌入 + fsmn-vad + 层次聚类的说话人分离
+
+    流程: 音频 → VAD 切段 → 嵌入提取 → 聚类 → SPEAKER_XX 标签
+    """
+
+    # 嵌入提取的窗口参数
+    WINDOW_SEC = 1.5       # 每个嵌入窗口的长度（秒）
+    STEP_SEC = 0.75        # 窗口步进（秒），50% 重叠
+    MIN_SEG_SEC = 0.3      # 最短有效片段（秒）
+
+    def __init__(self, sv_model, vad_model=None):
+        self.sv_model = sv_model
+        self.vad_model = vad_model
+
+    def diarize(
+        self,
+        audio_path: Path | str,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None,
+    ) -> DiarizationResult:
+        """执行说话人分离"""
+        import numpy as np
+        import soundfile as sf_lib
+        from scipy.cluster.hierarchy import fcluster, linkage
+
+        audio, sr = sf_lib.read(str(audio_path), dtype="float32")
+        if audio.ndim > 1:
+            audio = audio[:, 0]  # 立体声取左声道
+        duration_s = len(audio) / sr
+
+        # ---- Step 1: VAD ----
+        vad_segs = self._run_vad(audio_path, duration_s)
+        logger.info(f"VAD 检测到 {len(vad_segs)} 个语音片段")
+
+        if not vad_segs:
+            return DiarizationResult(speakers={}, segments=[])
+
+        # ---- Step 2: 滑窗切分 + 嵌入提取 ----
+        windows = self._build_windows(vad_segs)
+        if not windows:
+            return DiarizationResult(speakers={}, segments=[])
+
+        embeddings = self._extract_embeddings(audio, sr, windows)
+        if not embeddings:
+            return DiarizationResult(speakers={}, segments=[])
+
+        emb_array = np.stack([e for _, e in embeddings])
+        valid_windows = [w for w, _ in embeddings]
+        n = len(emb_array)
+
+        logger.info(f"提取了 {n} 个嵌入向量 (dim={emb_array.shape[1]})")
+
+        # ---- Step 3: 聚类 ----
+        if n == 1:
+            labels = [0]
+        else:
+            # L2 归一化 → 余弦距离
+            norms = np.linalg.norm(emb_array, axis=1, keepdims=True)
+            norms[norms < 1e-8] = 1.0
+            emb_normed = emb_array / norms
+
+            Z = linkage(emb_normed, method="ward")
+
+            # 先用距离阈值切分，再用 min/max_speakers 约束
+            threshold = 1.2
+            labels_arr = fcluster(Z, t=threshold, criterion="distance") - 1
+            n_clusters = len(set(labels_arr))
+
+            if max_speakers and n_clusters > max_speakers:
+                labels_arr = fcluster(Z, t=max_speakers, criterion="maxclust") - 1
+            elif min_speakers and n_clusters < min_speakers:
+                labels_arr = fcluster(Z, t=min_speakers, criterion="maxclust") - 1
+
+            labels = labels_arr.tolist()
+
+        # ---- Step 4: 窗口标签 → VAD 片段标签 ----
+        segments, speakers = self._build_result(vad_segs, valid_windows, labels)
+
+        logger.info(
+            f"说话人分离完成 (3D-Speaker): {len(speakers)} 个说话人, "
+            f"{len(segments)} 个片段"
+        )
+
+        return DiarizationResult(speakers=speakers, segments=segments)
+
+    # ------------------------------------------------------------------
+    # 内部方法
+    # ------------------------------------------------------------------
+
+    def _run_vad(self, audio_path, duration_s: float) -> list[list[float]]:
+        """运行 VAD，返回 [[start_s, end_s], ...]"""
+        if self.vad_model is not None:
+            try:
+                res = self.vad_model.generate(input=str(audio_path))
+                if res and res[0].get("value"):
+                    # fsmn-vad 返回毫秒
+                    return [[s / 1000.0, e / 1000.0] for s, e in res[0]["value"]]
+            except Exception as e:
+                logger.warning(f"fsmn-vad 失败，回退固定窗口: {e}")
+
+        # 回退: 固定窗口切分
+        window = 1.5
+        segs = []
+        pos = 0.0
+        while pos < duration_s:
+            end = min(pos + window, duration_s)
+            segs.append([pos, end])
+            pos = end
+        return segs
+
+    def _build_windows(self, vad_segs: list[list[float]]) -> list[list[float]]:
+        """将 VAD 片段切成固定长度的嵌入窗口"""
+        windows = []
+        for start, end in vad_segs:
+            dur = end - start
+            if dur < self.MIN_SEG_SEC:
+                continue
+            if dur <= self.WINDOW_SEC:
+                windows.append([start, end])
+            else:
+                # 滑窗
+                pos = start
+                while pos + self.MIN_SEG_SEC <= end:
+                    w_end = min(pos + self.WINDOW_SEC, end)
+                    windows.append([pos, w_end])
+                    pos += self.STEP_SEC
+        return windows
+
+    def _extract_embeddings(
+        self, audio, sr: int, windows: list[list[float]]
+    ):
+        """批量提取嵌入向量，返回 [(window, embedding), ...]"""
+        import numpy as np
+
+        results = []
+        # 分批，避免一次性 GPU 内存过大
+        batch_size = 32
+        for i in range(0, len(windows), batch_size):
+            batch_windows = windows[i : i + batch_size]
+            batch_audio = []
+            for start, end in batch_windows:
+                s_idx = int(start * sr)
+                e_idx = int(end * sr)
+                seg = audio[s_idx:e_idx]
+                if len(seg) < int(self.MIN_SEG_SEC * sr):
+                    continue
+                batch_audio.append(seg)
+
+            if not batch_audio:
+                continue
+
+            try:
+                res = self.sv_model.generate(input=batch_audio)
+                if res and "spk_embedding" in res[0]:
+                    emb_tensor = res[0]["spk_embedding"]
+                    # torch.Tensor → numpy
+                    if hasattr(emb_tensor, "cpu"):
+                        emb_np = emb_tensor.cpu().numpy()
+                    else:
+                        emb_np = np.array(emb_tensor)
+
+                    if emb_np.ndim == 1:
+                        emb_np = emb_np.reshape(1, -1)
+
+                    for j, w in enumerate(batch_windows[: emb_np.shape[0]]):
+                        results.append((w, emb_np[j]))
+            except Exception as e:
+                logger.warning(f"嵌入提取失败 (batch {i}): {e}")
+                continue
+
+        return results
+
+    def _build_result(
+        self,
+        vad_segs: list[list[float]],
+        windows: list[list[float]],
+        labels: list[int],
+    ) -> tuple[list[Segment], dict[str, SpeakerInfo]]:
+        """将窗口级标签映射回 VAD 片段，构建 DiarizationResult"""
+        import numpy as np
+        from collections import Counter
+
+        # 给每个 VAD 片段分配说话人标签（多数投票）
+        seg_labels = []
+        for vs, ve in vad_segs:
+            votes = []
+            for (ws, we), lbl in zip(windows, labels):
+                # 窗口与 VAD 片段的交集
+                overlap = min(ve, we) - max(vs, ws)
+                if overlap > 0.05:  # 至少 50ms 重叠
+                    votes.append(lbl)
+            if votes:
+                seg_labels.append(Counter(votes).most_common(1)[0][0])
+            else:
+                seg_labels.append(0)
+
+        # 合并相邻同一说话人的片段
+        merged_segments: list[Segment] = []
+        speaker_stats: dict[str, dict] = {}
+
+        for i, ((start, end), lbl) in enumerate(zip(vad_segs, seg_labels)):
+            spk = f"SPEAKER_{lbl:02d}"
+
+            # 与前一片段合并（同说话人 + 间隔 < 0.5s）
+            if (
+                merged_segments
+                and merged_segments[-1].speaker == spk
+                and start - merged_segments[-1].end < 0.5
+            ):
+                merged_segments[-1].end = end
+            else:
+                merged_segments.append(
+                    Segment(
+                        id=len(merged_segments),
+                        start=start,
+                        end=end,
+                        text="",
+                        speaker=spk,
+                    )
+                )
+
+            if spk not in speaker_stats:
+                speaker_stats[spk] = {"total_duration": 0.0, "segment_count": 0}
+            speaker_stats[spk]["total_duration"] += end - start
+            speaker_stats[spk]["segment_count"] += 1
+
+        # 重新编号 segment id
+        for idx, seg in enumerate(merged_segments):
+            seg.id = idx
+
+        speakers = {}
+        for spk_id, stats in speaker_stats.items():
+            speakers[spk_id] = SpeakerInfo(
+                id=spk_id,
+                display_name=spk_id,
+                total_duration=stats["total_duration"],
+                segment_count=stats["segment_count"],
+            )
+
+        return merged_segments, speakers
+
+
 class DiarizationService:
     """
     说话人分离服务
@@ -239,16 +483,22 @@ class DiarizationService:
         configuration_file = model_dir / "configuration.json"
 
         if config_file.exists():
-            # pyannote 系列
-            return self._load_pyannote(model_dir, config_file)
-        elif configuration_file.exists():
+            # 验证 config.yaml 是否是 pyannote 格式（含 pipeline key）
+            # ModelScope 下载的模型也可能带 config.yaml，但内容不同
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+            if isinstance(config, dict) and "pipeline" in config:
+                return self._load_pyannote(model_dir, config_file)
+            # config.yaml 不是 pyannote 格式，继续检测
+
+        if configuration_file.exists():
             # 3D-Speaker / ModelScope 系列
             return self._load_3d_speaker(model_dir)
-        else:
-            raise FileNotFoundError(
-                f"未知模型格式: {model_dir}\n"
-                f"需要 config.yaml (pyannote) 或 configuration.json (ModelScope)"
-            )
+
+        raise FileNotFoundError(
+            f"未知模型格式: {model_dir}\n"
+            f"需要 config.yaml (pyannote) 或 configuration.json (ModelScope)"
+        )
 
     def _load_pyannote(self, model_dir: Path, config_file: Path):
         """加载 pyannote 系列模型"""
@@ -278,16 +528,30 @@ class DiarizationService:
         return pipeline
 
     def _load_3d_speaker(self, model_dir: Path):
-        """加载 3D-Speaker / ModelScope 系列模型"""
+        """加载 3D-Speaker CAM++ 模型（嵌入提取 + VAD + 聚类 = 说话人分离）"""
         try:
-            from modelscope.pipelines import pipeline as ms_pipeline
-        except ImportError:
+            from funasr import AutoModel
+        except ImportError as e:
             raise ImportError(
-                "3D-Speaker 模型需要 modelscope 库。请运行: pip install modelscope"
-            )
+                "3D-Speaker 模型需要 funasr 库。请运行: pip install funasr"
+            ) from e
 
-        logger.info(f"加载 3D-Speaker 模型: {model_dir}")
-        return ms_pipeline(task="speaker-diarization", model=str(model_dir))
+        settings = get_settings()
+        vad_dir = settings.paths.models_dir / "streaming" / "funasr" / "fsmn-vad"
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"加载 CAM++ 说话人嵌入模型: {model_dir} (device={device})")
+
+        sv_model = AutoModel(model=str(model_dir), device=device, disable_update=True)
+
+        vad_model = None
+        if vad_dir.exists():
+            logger.info(f"加载 fsmn-vad: {vad_dir}")
+            vad_model = AutoModel(model=str(vad_dir), device=device, disable_update=True)
+        else:
+            logger.warning(f"fsmn-vad 未找到 ({vad_dir})，将使用固定窗口切分")
+
+        return _3DSpeakerDiarizer(sv_model, vad_model)
 
     def _load_with_fixed_paths(self, model_dir: Path, config: dict, device) -> Pipeline:
         """
@@ -342,6 +606,20 @@ class DiarizationService:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def unload(self) -> None:
+        """释放模型，回收 GPU 显存"""
+        if self._pipeline is not None:
+            logger.info("卸载说话人分离模型...")
+            del self._pipeline
+            self._pipeline = None
+            import gc
+            gc.collect()
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
     def diarize(
         self,
         audio_path: Path | str,
@@ -364,7 +642,10 @@ class DiarizationService:
         pipeline = self.pipeline
 
         # 根据 pipeline 类型选择调用方式
-        if hasattr(pipeline, 'itertracks') or hasattr(pipeline, '__call__'):
+        if isinstance(pipeline, _3DSpeakerDiarizer):
+            # CAM++ 嵌入 + VAD + 聚类
+            return pipeline.diarize(audio_path, min_spk, max_spk)
+        elif hasattr(pipeline, 'itertracks') or isinstance(pipeline, Pipeline):
             # pyannote Pipeline — 返回 Annotation 对象
             diarization_output = pipeline(
                 audio_path,
@@ -489,7 +770,9 @@ def get_diarization_service(model_name: str | None = None) -> DiarizationService
         model_name = get_settings().diarization.engine
 
     if _service is not None and _service_model != model_name:
-        _service = None  # 模型切换，重新创建
+        logger.info(f"说话人分离引擎切换: {_service_model} → {model_name}")
+        _service.unload()
+        _service = None
 
     if _service is None:
         _service = DiarizationService(model_name)

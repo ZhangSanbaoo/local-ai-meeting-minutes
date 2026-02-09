@@ -154,11 +154,13 @@ class ModelInfoResponse(BaseModel):
     display_name: str
     path: str
     size_mb: Optional[float] = None
+    engine: Optional[str] = None  # ASR 引擎类型: faster-whisper / funasr / fireredasr
 
 
 class ModelsListResponse(BaseModel):
     """模型列表响应"""
-    whisper_models: list[ModelInfoResponse]
+    asr_models: list[ModelInfoResponse] = []       # 统一 ASR 模型列表（所有引擎）
+    whisper_models: list[ModelInfoResponse] = []   # 向后兼容（asr_models 中 whisper 子集）
     llm_models: list[ModelInfoResponse]
     diarization_models: list[ModelInfoResponse]
     gender_models: list[ModelInfoResponse]

@@ -383,7 +383,7 @@ class FunASREngine(StreamingASREngine):
         try:
             punc_result = self._punc_model.generate(input=text)
             if punc_result and len(punc_result) > 0:
-                return punc_result[0].get("text", text)
+                return punc_result[0].get("text", text) or text
         except Exception as e:
             logger.debug(f"标点恢复失败: {e}")
         return text
@@ -632,7 +632,7 @@ def list_available_engines() -> list[dict]:
     funasr_parent = funasr_dir.parent  # streaming/funasr/
     engines.append({
         "id": "funasr",
-        "name": "FunASR Paraformer",
+        "name": "FunASR Paraformer (CER 3.5% ≈1G)",
         "description": "阿里达摩院 Paraformer 流式中文 ASR（需要 PyTorch）",
         "installed": funasr_dir.exists(),
         "model_dir": str(funasr_parent),
@@ -645,7 +645,7 @@ def list_available_engines() -> list[dict]:
         sherpa_encoder = sherpa_dir / "encoder.onnx"
     engines.append({
         "id": "sherpa-onnx",
-        "name": "sherpa-onnx Paraformer",
+        "name": "sherpa-onnx Paraformer (CER 4% ≈0.5G)",
         "description": "ONNX Runtime 流式三语 ASR（中/粤/英，无需 PyTorch）",
         "installed": sherpa_encoder.exists(),
         "model_dir": str(sherpa_dir),

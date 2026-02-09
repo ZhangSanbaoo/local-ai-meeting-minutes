@@ -60,6 +60,8 @@ def ensure_wav_16k_mono(
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
         )
         logger.debug(f"ffmpeg 输出: {result.stderr}")
@@ -92,7 +94,10 @@ def get_audio_duration(audio_path: Path) -> float:
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=True,
+        )
         return float(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError) as e:
         logger.warning(f"无法获取音频时长: {e}")
@@ -119,7 +124,10 @@ def get_audio_info(audio_path: Path) -> dict:
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=True,
+        )
         import json
         data = json.loads(result.stdout)
 

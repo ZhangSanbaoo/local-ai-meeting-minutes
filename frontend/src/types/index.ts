@@ -56,10 +56,12 @@ export interface ModelInfo {
   display_name: string
   path: string
   size_mb?: number
+  engine?: string  // ASR 引擎类型: faster-whisper / funasr / fireredasr
 }
 
 export interface ModelsResponse {
-  whisper_models: ModelInfo[]
+  asr_models: ModelInfo[]
+  whisper_models: ModelInfo[]  // 向后兼容
   llm_models: ModelInfo[]
   diarization_models: ModelInfo[]
   gender_models: ModelInfo[]
@@ -76,7 +78,7 @@ export interface SystemInfo {
 
 // 处理选项
 export interface ProcessOptions {
-  whisper_model: string
+  asr_model: string
   llm_model?: string
   diarization_model?: string
   gender_model?: string

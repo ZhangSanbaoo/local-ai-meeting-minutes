@@ -709,10 +709,8 @@ async def _post_process_recording(
                 None, naming_service.name_speakers, merged, gender_map
             )
 
-            # 用 SpeakerInfo 的 display_name 替换 segments 中的 speaker ID
-            for seg in merged:
-                if seg.speaker and seg.speaker in speakers_info:
-                    seg.speaker = speakers_info[seg.speaker].display_name
+            # 注意: 不要修改 seg.speaker（保持原始 SPEAKER_XX ID），
+            # 前端通过 speakers dict 查找 display_name，与 process.py 保持一致。
 
             await send_json(ws, {
                 "type": "post_progress",
@@ -764,7 +762,7 @@ async def _post_process_recording(
 
         import json
 
-        # 构建结果
+        # 构建结果（segment.speaker 保持原始 ID，speaker_name 用于显示）
         result_data = {
             "segments": [
                 {
@@ -773,6 +771,11 @@ async def _post_process_recording(
                     "end": seg.end,
                     "text": seg.text,
                     "speaker": seg.speaker or "SPEAKER_00",
+                    "speaker_name": (
+                        speakers_info[seg.speaker].display_name
+                        if speakers_info and seg.speaker and seg.speaker in speakers_info
+                        else seg.speaker or "SPEAKER_00"
+                    ),
                 }
                 for seg in merged
             ],
@@ -792,12 +795,13 @@ async def _post_process_recording(
         result_path = output_dir / "result.json"
         result_path.write_text(json.dumps(result_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # 保存 TXT
+        # 保存 TXT（使用 display_name）
         txt_path = output_dir / "result.txt"
         txt_lines = []
         for seg in merged:
-            speaker = seg.speaker or "SPEAKER_00"
-            txt_lines.append(f"[{_fmt_time(seg.start)}] {speaker}: {seg.text}")
+            sid = seg.speaker or "SPEAKER_00"
+            display = speakers_info[sid].display_name if speakers_info and sid in speakers_info else sid
+            txt_lines.append(f"[{_fmt_time(seg.start)}] {display}: {seg.text}")
         txt_path.write_text("\n".join(txt_lines), encoding="utf-8")
 
         # 保存总结

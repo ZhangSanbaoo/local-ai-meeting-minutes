@@ -18,15 +18,15 @@ import type { Segment } from '../types'
 export function FilePage() {
   const {
     // 模型
-    whisperModels,
+    asrModels,
     llmModels,
     diarizationModels,
     genderModels,
-    selectedWhisperModel,
+    selectedAsrModel,
     selectedLlmModel,
     selectedDiarizationModel,
     selectedGenderModel,
-    setSelectedWhisperModel,
+    setSelectedAsrModel,
     setSelectedLlmModel,
     setSelectedDiarizationModel,
     setSelectedGenderModel,
@@ -117,19 +117,20 @@ export function FilePage() {
   const refreshModels = useCallback(async () => {
     try {
       const data = await api.getModels()
+      const asr = data.asr_models?.length ? data.asr_models : data.whisper_models
       useAppStore.getState().setModels(
-        data.whisper_models,
+        asr,
         data.llm_models,
         data.diarization_models,
         data.gender_models,
       )
-      if (data.whisper_models.length > 0 && !selectedWhisperModel) {
-        setSelectedWhisperModel(data.whisper_models[0].name)
+      if (asr.length > 0 && !selectedAsrModel) {
+        setSelectedAsrModel(asr[0].name)
       }
     } catch (err) {
       console.error('加载模型列表失败:', err)
     }
-  }, [selectedWhisperModel, setSelectedWhisperModel])
+  }, [selectedAsrModel, setSelectedAsrModel])
 
   useEffect(() => {
     refreshModels()
@@ -230,7 +231,7 @@ export function FilePage() {
     try {
       const job = await api.uploadAndProcess(selectedFile, {
         name: meetingName.trim() || undefined,  // 自定义会议名称
-        whisper_model: selectedWhisperModel,
+        asr_model: selectedAsrModel,
         llm_model: selectedLlmModel !== 'disabled' ? selectedLlmModel : undefined,
         diarization_model: selectedDiarizationModel || undefined,
         gender_model: selectedGenderModel || undefined,
@@ -285,7 +286,7 @@ export function FilePage() {
     selectedFile,
     selectedHistoryId,
     meetingName,
-    selectedWhisperModel,
+    selectedAsrModel,
     selectedLlmModel,
     enableNaming,
     enableCorrection,
@@ -768,57 +769,92 @@ export function FilePage() {
             </>
           )}
 
-          <select
-            value={selectedWhisperModel}
-            onChange={(e) => setSelectedWhisperModel(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded text-sm"
-          >
-            {whisperModels.map((m) => (
-              <option key={m.name} value={m.name}>
-                {m.display_name}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={selectedLlmModel}
-            onChange={(e) => setSelectedLlmModel(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded text-sm"
-          >
-            {llmModels.map((m) => (
-              <option key={m.name} value={m.name}>
-                {m.display_name}
-              </option>
-            ))}
-          </select>
-
-          {diarizationModels.length > 0 && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 whitespace-nowrap">识别</span>
             <select
-              value={selectedDiarizationModel}
-              onChange={(e) => setSelectedDiarizationModel(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded text-sm"
-              title="说话人分离模型"
+              value={selectedAsrModel}
+              onChange={(e) => setSelectedAsrModel(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[150px]"
+              title="语音识别模型"
             >
-              {diarizationModels.map((m) => (
+              {(() => {
+                const grouped: Record<string, typeof asrModels> = {}
+                for (const m of asrModels) {
+                  const eng = m.engine || 'faster-whisper'
+                  if (!grouped[eng]) grouped[eng] = []
+                  grouped[eng].push(m)
+                }
+                const engineLabels: Record<string, string> = {
+                  'faster-whisper': 'Whisper',
+                  'funasr': 'FunASR',
+                  'fireredasr': 'FireRedASR',
+                }
+                const entries = Object.entries(grouped)
+                if (entries.length <= 1) {
+                  return asrModels.map((m) => (
+                    <option key={m.name} value={m.name}>{m.display_name}</option>
+                  ))
+                }
+                return entries.map(([eng, models]) => (
+                  <optgroup key={eng} label={engineLabels[eng] || eng}>
+                    {models.map((m) => (
+                      <option key={m.name} value={m.name}>{m.display_name}</option>
+                    ))}
+                  </optgroup>
+                ))
+              })()}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 whitespace-nowrap">LLM</span>
+            <select
+              value={selectedLlmModel}
+              onChange={(e) => setSelectedLlmModel(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[150px]"
+              title="LLM 模型（智能命名/总结）"
+            >
+              {llmModels.map((m) => (
                 <option key={m.name} value={m.name}>
                   {m.display_name}
                 </option>
               ))}
             </select>
+          </div>
+
+          {diarizationModels.length > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-gray-500 whitespace-nowrap">分离</span>
+              <select
+                value={selectedDiarizationModel}
+                onChange={(e) => setSelectedDiarizationModel(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[130px]"
+                title="说话人分离模型"
+              >
+                {diarizationModels.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.display_name}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
-          <select
-            value={selectedGenderModel}
-            onChange={(e) => setSelectedGenderModel(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded text-sm"
-            title="性别检测模型"
-          >
-            {genderModels.map((m) => (
-              <option key={m.name} value={m.name}>
-                {m.display_name}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>
+            <select
+              value={selectedGenderModel}
+              onChange={(e) => setSelectedGenderModel(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[130px]"
+              title="性别检测模型"
+            >
+              {genderModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.display_name}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <button
             onClick={refreshModels}
@@ -846,7 +882,7 @@ export function FilePage() {
                 <ProgressBar
                   progress={progress}
                   message={progressMessage}
-                  className="w-48"
+                  className="flex-1 min-w-[180px]"
                 />
               )}
             </>

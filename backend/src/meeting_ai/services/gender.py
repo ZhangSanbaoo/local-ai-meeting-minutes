@@ -385,26 +385,138 @@ class F0GenderDetector(GenderDetector):
 # ============================================================================
 
 class ECAPAGenderDetector(GenderDetector):
-    """ECAPA-TDNN 性别检测器"""
+    """ECAPA-TDNN 性别检测器 (JaesungHuh/voice-gender-classifier)
+
+    该模型使用 PyTorchModelHubMixin，不是标准 transformers 模型。
+    需要内联模型架构来加载 model.safetensors 权重。
+    """
 
     def __init__(self, model_dir: Path):
         self._model_dir = model_dir
         self._model = None
-        self._processor = None
+        self._device = "cpu"
 
     def _load_model(self):
         if self._model is not None:
             return
 
-        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+        import math
+
+        import torch.nn.functional as F
+        import torchaudio
+        from huggingface_hub import PyTorchModelHubMixin
 
         logger.info(f"加载 ECAPA-Gender 模型: {self._model_dir}")
-        self._processor = AutoFeatureExtractor.from_pretrained(str(self._model_dir))
-        self._model = AutoModelForAudioClassification.from_pretrained(str(self._model_dir))
 
-        if torch.cuda.is_available():
-            self._model = self._model.to("cuda")
+        # --- 模型架构 (来自 github.com/JaesungHuh/voice-gender-classifier) ---
+        class _SEModule(torch.nn.Module):
+            def __init__(self, channels, bottleneck=128):
+                super().__init__()
+                self.se = torch.nn.Sequential(
+                    torch.nn.AdaptiveAvgPool1d(1),
+                    torch.nn.Conv1d(channels, bottleneck, kernel_size=1, padding=0),
+                    torch.nn.ReLU(),
+                    torch.nn.Conv1d(bottleneck, channels, kernel_size=1, padding=0),
+                    torch.nn.Sigmoid(),
+                )
 
+            def forward(self, x):
+                return x * self.se(x)
+
+        class _Bottle2neck(torch.nn.Module):
+            def __init__(self, inplanes, planes, kernel_size=None, dilation=None, scale=8):
+                super().__init__()
+                width = int(math.floor(planes / scale))
+                self.conv1 = torch.nn.Conv1d(inplanes, width * scale, kernel_size=1)
+                self.bn1 = torch.nn.BatchNorm1d(width * scale)
+                self.nums = scale - 1
+                convs, bns = [], []
+                num_pad = math.floor(kernel_size / 2) * dilation
+                for _ in range(self.nums):
+                    convs.append(torch.nn.Conv1d(width, width, kernel_size=kernel_size,
+                                                 dilation=dilation, padding=num_pad))
+                    bns.append(torch.nn.BatchNorm1d(width))
+                self.convs = torch.nn.ModuleList(convs)
+                self.bns = torch.nn.ModuleList(bns)
+                self.conv3 = torch.nn.Conv1d(width * scale, planes, kernel_size=1)
+                self.bn3 = torch.nn.BatchNorm1d(planes)
+                self.relu = torch.nn.ReLU()
+                self.width = width
+                self.se = _SEModule(planes)
+
+            def forward(self, x):
+                residual = x
+                out = self.bn1(self.relu(self.conv1(x)))
+                spx = torch.split(out, self.width, 1)
+                for i in range(self.nums):
+                    sp = spx[i] if i == 0 else sp + spx[i]
+                    sp = self.bns[i](self.relu(self.convs[i](sp)))
+                    out = sp if i == 0 else torch.cat((out, sp), 1)
+                out = torch.cat((out, spx[self.nums]), 1)
+                out = self.se(self.bn3(self.relu(self.conv3(out))))
+                return out + residual
+
+        class _ECAPA_gender(torch.nn.Module, PyTorchModelHubMixin):
+            def __init__(self, C=1024):
+                super().__init__()
+                self.conv1 = torch.nn.Conv1d(80, C, kernel_size=5, stride=1, padding=2)
+                self.relu = torch.nn.ReLU()
+                self.bn1 = torch.nn.BatchNorm1d(C)
+                self.layer1 = _Bottle2neck(C, C, kernel_size=3, dilation=2, scale=8)
+                self.layer2 = _Bottle2neck(C, C, kernel_size=3, dilation=3, scale=8)
+                self.layer3 = _Bottle2neck(C, C, kernel_size=3, dilation=4, scale=8)
+                self.layer4 = torch.nn.Conv1d(3 * C, 1536, kernel_size=1)
+                self.attention = torch.nn.Sequential(
+                    torch.nn.Conv1d(4608, 256, kernel_size=1),
+                    torch.nn.ReLU(),
+                    torch.nn.BatchNorm1d(256),
+                    torch.nn.Tanh(),
+                    torch.nn.Conv1d(256, 1536, kernel_size=1),
+                    torch.nn.Softmax(dim=2),
+                )
+                self.bn5 = torch.nn.BatchNorm1d(3072)
+                self.fc6 = torch.nn.Linear(3072, 192)
+                self.bn6 = torch.nn.BatchNorm1d(192)
+                self.fc7 = torch.nn.Linear(192, 2)
+
+            def logtorchfbank(self, x):
+                flipped = torch.FloatTensor([-0.97, 1.0]).unsqueeze(0).unsqueeze(0).to(x.device)
+                x = x.unsqueeze(1)
+                x = F.pad(x, (1, 0), "reflect")
+                x = F.conv1d(x, flipped).squeeze(1)
+                mel = torchaudio.transforms.MelSpectrogram(
+                    sample_rate=16000, n_fft=512, win_length=400, hop_length=160,
+                    f_min=20, f_max=7600, window_fn=torch.hamming_window, n_mels=80,
+                ).to(x.device)(x) + 1e-6
+                mel = mel.log()
+                return mel - torch.mean(mel, dim=-1, keepdim=True)
+
+            def forward(self, x):
+                x = self.logtorchfbank(x)
+                x = self.bn1(self.relu(self.conv1(x)))
+                x1 = self.layer1(x)
+                x2 = self.layer2(x + x1)
+                x3 = self.layer3(x + x1 + x2)
+                x = self.relu(self.layer4(torch.cat((x1, x2, x3), dim=1)))
+                t = x.size()[-1]
+                global_x = torch.cat(
+                    (x,
+                     torch.mean(x, dim=2, keepdim=True).repeat(1, 1, t),
+                     torch.sqrt(torch.var(x, dim=2, keepdim=True).clamp(min=1e-4)).repeat(1, 1, t)),
+                    dim=1,
+                )
+                w = self.attention(global_x)
+                mu = torch.sum(x * w, dim=2)
+                sg = torch.sqrt((torch.sum((x ** 2) * w, dim=2) - mu ** 2).clamp(min=1e-4))
+                x = self.bn5(torch.cat((mu, sg), 1))
+                x = self.relu(self.bn6(self.fc6(x)))
+                return self.fc7(x)
+
+        # --- 模型架构结束 ---
+
+        self._model = _ECAPA_gender.from_pretrained(str(self._model_dir))
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model = self._model.to(self._device)
         self._model.eval()
         logger.info("ECAPA-Gender 模型加载完成")
 
@@ -423,28 +535,19 @@ class ECAPAGenderDetector(GenderDetector):
         if combined_audio is None:
             return Gender.UNKNOWN, 0.0
 
-        # ECAPA 模型期望 16kHz
-        inputs = self._processor(
-            combined_audio, sampling_rate=sample_rate, return_tensors="pt"
-        )
+        # 模型期望 16kHz 单声道
+        if sample_rate != 16000:
+            from scipy.signal import resample_poly
+            combined_audio = resample_poly(combined_audio, 16000, sample_rate).astype(np.float32)
 
-        if torch.cuda.is_available():
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+        waveform = torch.from_numpy(combined_audio).unsqueeze(0).to(self._device)
 
         with torch.no_grad():
-            logits = self._model(**inputs).logits
+            logits = self._model(waveform)
 
         probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
-        labels = self._model.config.id2label
-
-        # 找出 male/female 对应的索引
-        male_prob = 0.0
-        female_prob = 0.0
-        for idx, label in labels.items():
-            if "male" in label.lower() and "female" not in label.lower():
-                male_prob = float(probs[idx])
-            elif "female" in label.lower():
-                female_prob = float(probs[idx])
+        male_prob = float(probs[0])    # index 0 = male
+        female_prob = float(probs[1])  # index 1 = female
 
         if male_prob > female_prob and male_prob > 0.55:
             gender = Gender.MALE
@@ -558,7 +661,19 @@ def get_gender_detector(engine_name: str | None = None) -> GenderDetector:
     if _detector is not None and _detector_engine == engine_name:
         return _detector
 
-    # 切换引擎，重新创建
+    # 切换引擎：释放旧模型的 GPU 显存
+    if _detector is not None:
+        logger.info(f"性别检测引擎切换: {_detector_engine} → {engine_name}")
+        _old = _detector
+        _detector = None
+        del _old
+        import gc
+        gc.collect()
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
     if engine_name == "f0":
         _detector = F0GenderDetector()
     else:

@@ -15,7 +15,39 @@ from meeting_ai.api.schemas import (
     SystemInfoResponse,
 )
 from meeting_ai.config import get_settings
+from meeting_ai.services.asr import detect_engine_type
 from meeting_ai.services.streaming_asr import list_available_engines
+
+# 已知 ASR 模型的元数据（CER 取自 AISHELL-1 基准，VRAM 为 float16 推理估算）
+ASR_MODEL_META: dict[str, dict[str, str]] = {
+    # faster-whisper (name 是去掉 faster-whisper- 前缀后的)
+    "tiny": {"cer": "—", "vram": "≈1G", "label": "Whisper tiny"},
+    "base": {"cer": "—", "vram": "≈1G", "label": "Whisper base"},
+    "small": {"cer": "—", "vram": "≈1G", "label": "Whisper small"},
+    "medium": {"cer": "5.1%", "vram": "≈2G", "label": "Whisper medium"},
+    "large-v2": {"cer": "5.1%", "vram": "≈4G", "label": "Whisper large-v2"},
+    "large-v3": {"cer": "5.1%", "vram": "≈4G", "label": "Whisper large-v3"},
+    # FunASR
+    "sensevoice-small": {"cer": "3.0%", "vram": "≈1G", "label": "SenseVoice-Small"},
+    "sensevoice-large": {"cer": "2.1%", "vram": "≈4G", "label": "SenseVoice-Large"},
+    "paraformer-large": {"cer": "1.7%", "vram": "≈1G", "label": "Paraformer-Large"},
+    # FireRedASR
+    "fireredasr-aed": {"cer": "0.6%", "vram": "≈3G", "label": "FireRedASR-AED"},
+}
+
+# 已知说话人分离模型的元数据（DER 取自 AMI/DIHARD 基准）
+DIAR_MODEL_META: dict[str, dict[str, str]] = {
+    "pyannote-3.1": {"metric": "DER 11%", "vram": "≈2G", "label": "pyannote 3.1"},
+    "pyannote-community-1": {"metric": "DER 15%", "vram": "≈1.5G", "label": "pyannote community"},
+    "3d-speaker-campplus": {"metric": "EER 5%", "vram": "≈0.5G", "label": "CAM++"},
+}
+
+# 已知性别检测模型的元数据
+GENDER_MODEL_META: dict[str, dict[str, str]] = {
+    "f0": {"metric": "≈90%", "vram": "CPU", "label": "基频分析 (内置)"},
+    "ecapa-gender": {"metric": "≈97%", "vram": "≈0.3G", "label": "ECAPA-TDNN"},
+    "wav2vec2-gender": {"metric": "≈95%", "vram": "≈1.5G", "label": "Wav2Vec2"},
+}
 
 router = APIRouter()
 
@@ -24,30 +56,65 @@ router = APIRouter()
 async def list_models():
     """获取可用模型列表"""
     settings = get_settings()
-    whisper_models = []
+    asr_models: list[ModelInfoResponse] = []
     llm_models = []
 
-    # 扫描 Whisper 模型
+    def _build_asr_display_name(name: str, size_mb: float) -> str:
+        """构建 ASR display_name: 紧凑格式 Label (精度 显存)"""
+        meta = ASR_MODEL_META.get(name)
+        if meta:
+            return f"{meta['label']} ({meta['cer']} {meta['vram']})"
+        return f"{name} ({size_mb:.0f}MB)"
+
+    def _build_diar_display_name(name: str, size_mb: float) -> str:
+        """构建说话人分离 display_name"""
+        meta = DIAR_MODEL_META.get(name)
+        if meta:
+            return f"{meta['label']} ({meta['metric']} {meta['vram']})"
+        return f"{name} ({size_mb:.0f}MB)"
+
+    def _build_gender_display_name(name: str, size_mb: float) -> str:
+        """构建性别检测 display_name"""
+        meta = GENDER_MODEL_META.get(name)
+        if meta:
+            return f"{meta['label']} ({meta['metric']} {meta['vram']})"
+        return f"{name} ({size_mb:.0f}MB)"
+
+    # 扫描 Whisper 模型 (models/whisper/)
     whisper_dir = settings.paths.models_dir / "whisper"
     if whisper_dir.exists():
         for d in sorted(whisper_dir.iterdir()):
             if d.is_dir() and (d.name.startswith("faster-whisper-") or (d / "config.json").exists()):
                 model_name = d.name.replace("faster-whisper-", "")
-                display_name = model_name
-                if model_name == "small":
-                    display_name = "small (快速)"
-                elif model_name == "medium":
-                    display_name = "medium (推荐)"
-                elif "large" in model_name:
-                    display_name = f"{model_name} (高精度)"
-
                 size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
-                whisper_models.append(ModelInfoResponse(
+                asr_models.append(ModelInfoResponse(
                     name=model_name,
-                    display_name=display_name,
+                    display_name=_build_asr_display_name(model_name, size_mb),
                     path=str(d),
                     size_mb=round(size_mb, 1),
+                    engine="faster-whisper",
                 ))
+
+    # 扫描非 Whisper ASR 模型 (models/asr/)
+    asr_dir = settings.paths.models_dir / "asr"
+    if asr_dir.exists():
+        for d in sorted(asr_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            engine_type = detect_engine_type(d)
+            if engine_type is None:
+                continue
+            size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
+            asr_models.append(ModelInfoResponse(
+                name=d.name,
+                display_name=_build_asr_display_name(d.name, size_mb),
+                path=str(d),
+                size_mb=round(size_mb, 1),
+                engine=engine_type,
+            ))
+
+    # 向后兼容: whisper_models = asr_models 中 engine=="faster-whisper" 的子集
+    whisper_models = [m for m in asr_models if m.engine == "faster-whisper"]
 
     # 扫描 LLM 模型
     llm_models.append(ModelInfoResponse(
@@ -84,7 +151,7 @@ async def list_models():
                 size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
                 diarization_models.append(ModelInfoResponse(
                     name=d.name,
-                    display_name=d.name,
+                    display_name=_build_diar_display_name(d.name, size_mb),
                     path=str(d),
                     size_mb=round(size_mb, 1),
                 ))
@@ -93,7 +160,7 @@ async def list_models():
     gender_models = [
         ModelInfoResponse(
             name="f0",
-            display_name="基频分析 (内置)",
+            display_name=_build_gender_display_name("f0", 0),
             path="",
             size_mb=None,
         )
@@ -110,12 +177,13 @@ async def list_models():
                 size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
                 gender_models.append(ModelInfoResponse(
                     name=d.name,
-                    display_name=d.name,
+                    display_name=_build_gender_display_name(d.name, size_mb),
                     path=str(d),
                     size_mb=round(size_mb, 1),
                 ))
 
     return ModelsListResponse(
+        asr_models=asr_models,
         whisper_models=whisper_models,
         llm_models=llm_models,
         diarization_models=diarization_models,
@@ -169,6 +237,64 @@ async def upload_whisper_model(file: UploadFile = File(...)):
         if temp_path.exists():
             temp_path.unlink()
         raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+
+
+@router.post("/models/upload/asr")
+async def upload_asr_model(file: UploadFile = File(...)):
+    """
+    上传 ASR 模型 (压缩包)
+
+    支持: .zip, .tar.gz
+    解压后放入 models/asr/ 目录
+    适用于 SenseVoice / Paraformer / FireRedASR 等非 Whisper 模型
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+
+    if not (file.filename.endswith(".zip") or file.filename.endswith(".tar.gz")):
+        raise HTTPException(status_code=400, detail="只支持 .zip 或 .tar.gz 格式")
+
+    settings = get_settings()
+    asr_dir = settings.paths.models_dir / "asr"
+    asr_dir.mkdir(parents=True, exist_ok=True)
+
+    temp_path = asr_dir / file.filename
+    try:
+        content = await file.read()
+        temp_path.write_bytes(content)
+
+        model_name = file.filename.replace(".tar.gz", "").replace(".zip", "")
+        extract_dir = asr_dir / model_name
+
+        if file.filename.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(temp_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        else:
+            import tarfile
+            with tarfile.open(temp_path, 'r:gz') as tf:
+                tf.extractall(extract_dir)
+
+        temp_path.unlink()
+        return {"status": "ok", "model_name": model_name, "path": str(extract_dir)}
+
+    except Exception as e:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+
+
+@router.delete("/models/asr/{model_name}")
+async def delete_asr_model(model_name: str):
+    """删除 ASR 模型（models/asr/ 目录下）"""
+    settings = get_settings()
+    model_path = settings.paths.models_dir / "asr" / model_name
+
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail="模型不存在")
+
+    shutil.rmtree(model_path)
+    return {"status": "ok", "message": f"已删除: {model_name}"}
 
 
 @router.post("/models/upload/llm")

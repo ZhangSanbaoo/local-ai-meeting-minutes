@@ -422,53 +422,66 @@ export function RealtimePage() {
         </div>
 
         {/* LLM 模型选择 */}
-        <select
-          value={selectedLlm}
-          onChange={(e) => setSelectedLlm(e.target.value)}
-          disabled={controlsDisabled}
-          className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[220px]"
-        >
-          {llmModels.map((m) => (
-            <option key={m.name} value={m.name}>
-              {m.display_name}{m.size_mb ? ` (${Math.round(m.size_mb / 1024 * 10) / 10}GB)` : ''}
-            </option>
-          ))}
-          {llmModels.length === 0 && <option>加载中...</option>}
-        </select>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-gray-500 whitespace-nowrap">LLM</span>
+          <select
+            value={selectedLlm}
+            onChange={(e) => setSelectedLlm(e.target.value)}
+            disabled={controlsDisabled}
+            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[220px]"
+            title="LLM 模型（智能命名/总结）"
+          >
+            {llmModels.map((m) => (
+              <option key={m.name} value={m.name}>
+                {m.display_name}{m.size_mb ? ` (${Math.round(m.size_mb / 1024 * 10) / 10}GB)` : ''}
+              </option>
+            ))}
+            {llmModels.length === 0 && <option>加载中...</option>}
+          </select>
+        </div>
 
         {/* 说话人分离模型 */}
         {diarizationModels.length > 0 && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 whitespace-nowrap">分离</span>
+            <select
+              value={selectedDiarModel}
+              onChange={(e) => setSelectedDiarModel(e.target.value)}
+              disabled={controlsDisabled}
+              className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[240px]"
+              title="说话人分离模型"
+            >
+              {diarizationModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.display_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {/* 性别检测模型 */}
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>
           <select
-            value={selectedDiarModel}
-            onChange={(e) => setSelectedDiarModel(e.target.value)}
+            value={selectedGenderModel}
+            onChange={(e) => setSelectedGenderModel(e.target.value)}
             disabled={controlsDisabled}
-            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[180px]"
-            title="说话人分离模型"
+            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[240px]"
+            title="性别检测模型"
           >
-            {diarizationModels.map((m) => (
+            {genderModels.map((m) => (
               <option key={m.name} value={m.name}>
                 {m.display_name}
               </option>
             ))}
           </select>
-        )}
+        </div>
+      </div>
 
-        {/* 性别检测模型 */}
-        <select
-          value={selectedGenderModel}
-          onChange={(e) => setSelectedGenderModel(e.target.value)}
-          disabled={controlsDisabled}
-          className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[180px]"
-          title="性别检测模型"
-        >
-          {genderModels.map((m) => (
-            <option key={m.name} value={m.name}>
-              {m.display_name}
-            </option>
-          ))}
-        </select>
-
-        {/* 系统音频（未实现占位） */}
+      {/* ── Row 2: 录音控制 ── */}
+      <div className="flex items-center justify-center gap-4 py-3 bg-gray-100">
+        {/* 系统音频（待实现） */}
         <div className="flex items-center gap-1 opacity-50">
           <Monitor className="w-4 h-4 text-gray-500" />
           <select
@@ -479,10 +492,7 @@ export function RealtimePage() {
             <option>系统音频(待实现)</option>
           </select>
         </div>
-      </div>
 
-      {/* ── Row 2: 录音控制 ── */}
-      <div className="flex items-center justify-center gap-4 py-3 bg-gray-100">
         {/* 麦克风选择 */}
         <div className="flex items-center gap-1">
           <Mic className="w-4 h-4 text-gray-500" />
