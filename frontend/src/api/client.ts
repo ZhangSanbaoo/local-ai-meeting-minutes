@@ -149,10 +149,11 @@ export async function uploadAndProcess(
   if (options.llm_model) {
     formData.append('llm_model', options.llm_model)
   }
-  if (options.diarization_model) {
+  // 确保空字符串不会被传递（避免后端接收到空值而使用默认配置）
+  if (options.diarization_model && options.diarization_model.trim()) {
     formData.append('diarization_model', options.diarization_model)
   }
-  if (options.gender_model) {
+  if (options.gender_model && options.gender_model.trim()) {
     formData.append('gender_model', options.gender_model)
   }
   formData.append('enable_naming', String(options.enable_naming))

@@ -4,16 +4,16 @@
 把 ASR 转写结果和说话人分离结果对齐。
 为每个文字片段分配说话人。
 
-支持两种对齐策略：
-- 短片段（<5s）：用中点匹配（whisper 等精细引擎）
-- 长片段（≥5s）：先按标点拆句，再按时间估算分配说话人（保证句子完整）
-  - 若文本无标点，回退到字符比例分割
+支持三种对齐策略（按优先级）：
+1. 字级对齐：有 char_timestamps 时，逐字查 diarization → 精确切分
+2. 中点匹配：短片段（<5s），用中点匹配（快速准确）
+3. 句级分割：长片段（≥5s），按标点拆句再按时间分配说话人
 """
 
 import re
 
 from ..logger import get_logger
-from ..models import DiarizationResult, Segment, TranscriptResult
+from ..models import CharTimestamp, DiarizationResult, Segment, TranscriptResult
 
 logger = get_logger("services.alignment")
 
@@ -28,13 +28,20 @@ def align_transcript_with_speakers(
     """
     把转写片段和说话人对齐
 
-    策略：
-    - 短 ASR 片段：用中点找说话人（快速准确，适合 whisper）
-    - 长 ASR 片段：按说话人边界分割文本，每段分配对应说话人
+    策略优先级：
+    1. 字级对齐（有 char_timestamps）→ 最精确
+    2. 中点匹配（短片段）→ 快速准确
+    3. 句级分割（长片段）→ 保证句子完整
     """
+    has_char_ts = (
+        transcript.char_timestamps is not None
+        and len(transcript.char_timestamps) == len(transcript.segments)
+    )
+
     logger.info(
         f"对齐: {len(transcript.segments)} 个转写片段, "
-        f"{len(diarization.segments)} 个说话人片段"
+        f"{len(diarization.segments)} 个说话人片段, "
+        f"字级时间戳={'有' if has_char_ts else '无'}"
     )
 
     # 构建说话人时间线
@@ -55,11 +62,23 @@ def align_transcript_with_speakers(
     aligned_segments = []
     next_id = 0
 
-    for seg in transcript.segments:
-        duration = seg.end - seg.start
+    for seg_idx, seg in enumerate(transcript.segments):
+        # 优先级 1：字级对齐
+        char_ts = None
+        if has_char_ts:
+            char_ts = transcript.char_timestamps[seg_idx]
 
+        if char_ts and len(char_ts) > 0:
+            sub_segs = _align_by_char_timestamps(
+                seg, char_ts, speaker_timeline, next_id,
+            )
+            aligned_segments.extend(sub_segs)
+            next_id += len(sub_segs)
+            continue
+
+        # 优先级 2 & 3：中点匹配 / 句级分割
+        duration = seg.end - seg.start
         if duration < _LONG_SEGMENT_THRESHOLD:
-            # 短片段：中点匹配
             mid_time = (seg.start + seg.end) / 2
             speaker = _find_speaker_at(speaker_timeline, mid_time)
             aligned_segments.append(Segment(
@@ -68,7 +87,6 @@ def align_transcript_with_speakers(
             ))
             next_id += 1
         else:
-            # 长片段：按说话人边界分割
             sub_segs = _split_by_speakers(seg, speaker_timeline, next_id)
             aligned_segments.extend(sub_segs)
             next_id += len(sub_segs)
@@ -79,6 +97,73 @@ def align_transcript_with_speakers(
 
     logger.info(f"对齐完成: {len(aligned_segments)} 个片段")
     return aligned_segments
+
+
+# ---------------------------------------------------------------------------
+# 字级对齐（最精确）
+# ---------------------------------------------------------------------------
+
+def _align_by_char_timestamps(
+    seg: Segment,
+    char_ts: list[CharTimestamp],
+    timeline: list[tuple],
+    id_start: int,
+) -> list[Segment]:
+    """
+    用字级时间戳逐字匹配说话人，然后合并连续同说话人的字为一段。
+
+    这是最精确的对齐方式：每个字独立查 diarization 时间线。
+    """
+    if not char_ts:
+        speaker = _find_speaker_at(timeline, (seg.start + seg.end) / 2)
+        return [Segment(
+            id=id_start, start=seg.start, end=seg.end,
+            text=seg.text, speaker=speaker,
+        )]
+
+    # 为每个字/词分配说话人
+    char_speakers: list[tuple[str, float, float, str]] = []  # (char, start, end, speaker)
+    for ct in char_ts:
+        mid = (ct.start + ct.end) / 2
+        speaker = _find_speaker_at(timeline, mid)
+        char_speakers.append((ct.char, ct.start, ct.end, speaker))
+
+    # 合并连续同说话人的字
+    groups: list[tuple[str, float, float, str]] = []  # (text, start, end, speaker)
+    for char_text, c_start, c_end, speaker in char_speakers:
+        if groups and groups[-1][3] == speaker:
+            prev_text, prev_start, _, prev_speaker = groups[-1]
+            groups[-1] = (prev_text + char_text, prev_start, c_end, prev_speaker)
+        else:
+            groups.append((char_text, c_start, c_end, speaker))
+
+    # 生成 Segment
+    results = []
+    for text, t_start, t_end, speaker in groups:
+        text = text.strip()
+        if text:
+            results.append(Segment(
+                id=id_start + len(results),
+                start=round(t_start, 3),
+                end=round(t_end, 3),
+                text=text,
+                speaker=speaker,
+            ))
+
+    if results:
+        if len(results) > 1:
+            logger.debug(
+                f"字级对齐: '{seg.text[:20]}...' → {len(results)} 段 "
+                f"({len(char_ts)} 字)"
+            )
+        return results
+
+    # 回退
+    speaker = _find_speaker_at(timeline, (seg.start + seg.end) / 2)
+    return [Segment(
+        id=id_start, start=seg.start, end=seg.end,
+        text=seg.text, speaker=speaker,
+    )]
 
 
 def _find_speaker_at(timeline: list[tuple], time: float) -> str:

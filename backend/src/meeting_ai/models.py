@@ -7,9 +7,16 @@
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field, computed_field
+
+
+class CharTimestamp(NamedTuple):
+    """单个字/词的时间戳"""
+    char: str
+    start: float  # 秒
+    end: float    # 秒
 
 
 class Gender(str, Enum):
@@ -145,6 +152,12 @@ class TranscriptResult(BaseModel):
     language_probability: float = Field(ge=0, le=1, description="语言检测置信度")
     duration: float = Field(ge=0, description="音频总时长（秒）")
     segments: list[Segment] = Field(default_factory=list, description="转写片段列表")
+
+    # 字级时间戳（内部使用，不序列化到 JSON）
+    # char_timestamps[i] 对应 segments[i] 的逐字时间戳
+    char_timestamps: list[list[CharTimestamp]] | None = Field(
+        default=None, exclude=True, description="逐字时间戳（内部对齐用）",
+    )
 
     @computed_field
     @property

@@ -53,15 +53,16 @@ git checkout snapshot/<timestamp> -- path/to/file
 
 ## 核心功能
 
-1. **说话人分离** - pyannote-audio 3.1，识别音频中不同说话人
-2. **语音转写** - faster-whisper，音频文件离线转写
-3. **实时流式转写** - FunASR Paraformer / sherpa-onnx 双引擎，边录边转
-4. **流式 VAD** - fsmn-vad 语音活动检测，自动分段
-5. **智能命名** - LLM 推断说话人身份（"张教授"、"小柔"）
-6. **性别检测** - librosa 基频分析
-7. **错别字校正** - LLM 修复转写错误
-8. **会议总结** - LLM 自动生成会议摘要
-9. **音频增强** - 降噪、去混响（可选）
+1. **说话人辨识** - pyannote-audio 3.1 / 3D-Speaker CAM++，识别"谁在什么时候说话"
+2. **多引擎语音转写** - faster-whisper / FunASR (SenseVoice, Paraformer) / FireRedASR，可选切换
+3. **VAD 预分段** - fsmn-vad 切短音频再逐段转写，所有引擎获得精确时间戳
+4. **字级对齐** - 逐字/词时间戳 + diarization → 精确说话人切分（见下文）
+5. **实时流式转写** - FunASR Paraformer / sherpa-onnx 双引擎，边录边转
+6. **智能命名** - LLM + 正则推断说话人身份（"张教授"、"小柔"），去重保护
+7. **性别检测** - f0 基频 / ECAPA-TDNN / wav2vec2，多引擎可选
+8. **错别字校正** - LLM 修复转写错误
+9. **会议总结** - LLM 自动生成会议摘要
+10. **音频增强** - Demucs 人声分离 + DeepFilterNet3 降噪 + Resemble Enhance（可选）
 
 ---
 
@@ -71,14 +72,80 @@ git checkout snapshot/<timestamp> -- path/to/file
 |------|------|------|
 | 后端框架 | FastAPI | REST API + WebSocket 实时通信 |
 | 前端框架 | React 18 + TypeScript | Vite + Tailwind CSS + Zustand |
-| 说话人分离 | pyannote-audio 3.1 | 本地离线 |
-| 实时流式 ASR | FunASR 1.3.1 + sherpa-onnx 1.12.23 | 双引擎可选 |
-| 流式 VAD | fsmn-vad | FunASR 官方 0.4M 参数 VAD |
-| 离线 ASR | faster-whisper | CTranslate2，后处理和音频文件 |
-| LLM | llama-cpp-python + Qwen2.5-7B | 命名/校正/总结 |
-| 性别检测 | librosa 基频分析 | 男性 < 165Hz < 女性 |
-| 音频处理 | ffmpeg + librosa | 格式转换 |
+| 说话人辨识 | pyannote-audio 3.1 / 3D-Speaker CAM++ | 多引擎可选（A层）|
+| 实时流式 ASR | FunASR 1.3.1 + sherpa-onnx 1.12.23 | 双引擎可选（A层）|
+| **VAD** | **Silero VAD** ← fsmn-vad | **升级中**：更可靠、多语言（B层）|
+| 文件 ASR | faster-whisper / FunASR / FireRedASR | 3 引擎可选（A层）|
+| **强制对齐** | **wav2vec2** ← Paraformer | **升级中**：10-50ms 精度（B层）|
+| 标点恢复 | ct-punc | FunASR 生态标准（B层）✅ |
+| LLM | llama-cpp-python + Qwen2.5-7B | 用户可配置（A层）|
+| 性别检测 | f0 / ECAPA-TDNN / wav2vec2 | 3 引擎可选（A层）|
+| 音频增强 | Demucs + DeepFilterNet3 + Resemble | 业界顶级（B层）✅ |
+| 音频处理 | ffmpeg | 格式转换 |
 | 配置 | pydantic-settings | 支持 .env 文件 |
+
+---
+
+## 架构哲学（2026-02-15 重要决策）
+
+### **双层模块设计原则**
+
+本项目采用"用户可配置层"和"内部实现层"分离的架构，确保在保持接口稳定的前提下使用业界最佳实践。
+
+#### **A层：用户可配置模块**（保持多引擎灵活性）
+- **ASR 引擎** - Whisper / FunASR / FireRedASR（用户按任务选择）
+- **LLM** - Qwen / 其他 GGUF 模型（用户可配置）
+- **说话人分离** - pyannote-3.1 / 3D-Speaker CAM++（用户选择）
+- **性别检测** - f0 / ECAPA-TDNN / wav2vec2（用户选择）
+
+#### **B层：内部实现模块**（使用业界标准，对用户透明）
+- **VAD** - **Silero VAD**（whisperX 标准）→ 替换 fsmn-vad，更可靠
+- **强制对齐** - **wav2vec2-based**（whisperX 核心）→ 替换 Paraformer，10-50ms 精度
+- **音频增强** - Demucs + DeepFilterNet3 + Resemble Enhance（已是业界顶级 ✅）
+- **标点恢复** - ct-punc（FunASR 生态标准 ✅）
+
+### **核心原则**
+
+> **"保持接口稳定，升级内部实现到最佳方案"**
+
+- 用户面向的 API 遵循 OpenAPI 3.0 规范（对标 OpenAI Whisper / AssemblyAI）
+- 内部实现使用经过同行评审的学术界/工业界标准
+- 升级内部组件时黑盒输入输出保持不变
+
+### **竞争优势**
+
+与商业 API 对比，我们在以下方面超越或持平：
+
+| 特性 | 商业API（OpenAI/AssemblyAI/Google） | 我们 |
+|------|-------------------------------------|------|
+| 时间戳粒度 | 词级（word-level） | **字级（char-level）** ✅ |
+| 性别检测 | ❌ 不提供 | ✅ 三引擎可选 |
+| 智能命名 | ❌ 只有 SPEAKER_00 | ✅ LLM自动推断（全球独创）|
+| 多引擎支持 | ❌ 锁定单一引擎 | ✅ 三引擎可选 |
+| 离线运行 | ❌ 必须联网 | ✅ 完全离线 |
+| 接口规范 | OpenAPI 3.0 | ✅ 完全一致 |
+
+### **接口标准验证**
+
+我们的核心接口完全符合业界标准：
+
+```python
+# ASR 接口 - 对标 OpenAI Whisper API
+class ASREngine:
+    def transcribe(audio_path, language) -> TranscriptResult
+        # segments + char_timestamps (我们甚至更细粒度)
+
+# 说话人分离接口 - 对标 pyannote.audio
+def diarize(audio_path) -> DiarizationResult
+    # speakers + segments (完全一致)
+
+# 对齐接口 - 对标 whisperX
+def align_transcript_with_speakers(
+    transcript: TranscriptResult,
+    diarization: DiarizationResult
+) -> list[Segment]
+    # 与 whisperX 的 assign_word_speakers() 思路一致
+```
 
 ---
 
@@ -98,10 +165,10 @@ meeting-ai/
 │   │   │       └── realtime.py      # WebSocket 实时流式 ASR
 │   │   ├── services/
 │   │   │   ├── streaming_asr.py     # 流式 ASR 引擎抽象 (FunASR + sherpa-onnx + fsmn-vad)
-│   │   │   ├── diarization.py       # 说话人分离 (pyannote)
-│   │   │   ├── asr.py               # 离线转写 (faster-whisper)
-│   │   │   ├── alignment.py         # 说话人-文本对齐
-│   │   │   ├── gender.py            # 性别检测 (基频分析)
+│   │   │   ├── diarization.py       # 说话人辨识 (pyannote / 3D-Speaker)
+│   │   │   ├── asr.py               # 多引擎 ASR + VAD 预分段 + 强制对齐
+│   │   │   ├── alignment.py         # 说话人-文本对齐 (字级/中点/句级)
+│   │   │   ├── gender.py            # 性别检测 (f0 / ECAPA-TDNN / wav2vec2)
 │   │   │   ├── naming.py            # 智能命名 (LLM + 正则)
 │   │   │   ├── correction.py        # 错别字校正 (LLM)
 │   │   │   ├── summary.py           # 会议总结 (LLM)
@@ -141,14 +208,18 @@ meeting-ai/
 │   └── vite.config.ts               # Vite 配置 (含 API 代理)
 │
 ├── models/                          # 本地模型目录
-│   ├── pyannote/                    # 说话人分离模型
-│   ├── whisper/                     # Whisper ASR 模型
+│   ├── pyannote/                    # pyannote 共享子模型 (wespeaker, segmentation)
+│   ├── diarization/                 # 说话人辨识模型 (pyannote-3.1/, 3d-speaker-campplus/)
+│   ├── whisper/                     # Whisper ASR 模型 (faster-whisper-*)
+│   ├── asr/                         # 非 Whisper ASR 模型 (sensevoice-small/, paraformer-large/, fireredasr-aed/)
+│   ├── gender/                      # 性别检测模型 (ecapa-gender/, wav2vec2-gender/)
 │   ├── llm/                         # LLM (Qwen2.5-7B GGUF)
-│   └── streaming/                   # 流式 ASR 模型
+│   ├── deepfilter/                  # DeepFilterNet3 ONNX 降噪模型
+│   └── streaming/                   # 流式 ASR + 共享辅助模型
 │       ├── funasr/
 │       │   ├── paraformer-zh-streaming/  # 流式中文 ASR
-│       │   ├── ct-punc/                  # 标点恢复
-│       │   └── fsmn-vad/                 # 语音活动检测
+│       │   ├── ct-punc/                  # 标点恢复 (FireRedASR 后处理 + 流式)
+│       │   └── fsmn-vad/                 # VAD (流式 + 文件转写预分段)
 │       └── sherpa-onnx/             # 三语 ASR (zh/粤/en)
 │
 ├── outputs/                         # 处理结果输出
@@ -251,8 +322,11 @@ Recording stops → pyannote diarization → alignment → LLM pipeline → resu
 
 ### 音频文件处理 (FilePage)
 ```
-上传音频 → 音频转换(16kHz WAV) → [音频增强] → 说话人分离 → 语音转写
-→ 时间对齐 → [错别字校正] → 性别检测 → 智能命名 → [会议总结] → 输出
+上传音频 → 音频转换(16kHz WAV) → [音频增强]
+    ├→ 说话人辨识 (pyannote/CAM++) → 说话人时间线 (谁在什么时候说话)
+    └→ VAD 预分段 (fsmn-vad) → 逐段 ASR 转写 → [ct-punc 标点] → 字级时间戳
+         ↓
+    字级对齐 (逐字查说话人) → [错别字校正] → 性别检测 → 智能命名 → [会议总结] → 输出
 ```
 
 ### 实时录音处理 (RealtimePage)
@@ -260,6 +334,59 @@ Recording stops → pyannote diarization → alignment → LLM pipeline → resu
 麦克风 → PCM 16kHz → WebSocket → ASR + VAD 并行 → 实时文字
 → 停止录音 → pyannote 分离 → 对齐 → [校正] → 性别 → 命名 → [总结]
 ```
+
+---
+
+## 多引擎 ASR 架构 (asr.py)
+
+### 引擎
+
+| 引擎 | 模型目录 | 特点 |
+|------|---------|------|
+| FasterWhisperEngine | `models/whisper/faster-whisper-*` | 99 语言，词级时间戳 |
+| FunASRFileEngine | `models/asr/sensevoice-*`, `paraformer-*` | 中文最优，字级时间戳 |
+| FireRedASREngine | `models/asr/fireredasr-*` | 中文 SOTA (CER 0.6%)，60s 限制 |
+
+### 处理管线
+
+```
+1. fsmn-vad 预分段 → 2-15s 语音段列表
+2. 逐段转写 (任意 ASR 引擎)
+3. 提取字级时间戳:
+   - Whisper: word_timestamps=True (原生词级)
+   - FunASR: timestamp 字段 (原生字级)
+   - FireRedASR: Paraformer 强制对齐 + LCS 映射 (间接字级)
+4. FireRedASR: ct-punc 标点恢复
+```
+
+### 强制对齐 (FireRedASR 专用)
+
+FireRedASR 不返回时间戳。用 Paraformer 做强制对齐：
+1. 用 Paraformer 对同一段音频转写 → 得到参考文本 + 字级时间戳
+2. 用 LCS (最长公共子序列) DP 对齐 FireRedASR 文本 ↔ Paraformer 文本
+3. 匹配字复用时间戳，不匹配字线性插值
+4. 对齐完成后释放 Paraformer 回收显存
+
+### 对齐策略 (alignment.py)
+
+| 优先级 | 策略 | 条件 | 精度 |
+|--------|------|------|------|
+| 1 | **字级对齐** | 有 char_timestamps | 每个字独立查 diarization |
+| 2 | 中点匹配 | 片段 < 5s | 用中点时间查说话人 |
+| 3 | 句级分割 | 片段 >= 5s | 按标点拆句再分配 |
+
+### 工厂函数
+
+```python
+engine = get_asr_engine("sensevoice-small")  # 自动检测引擎类型
+result = engine.transcribe(audio_path)        # 返回 TranscriptResult (含 char_timestamps)
+```
+
+### 辅助模型 (懒加载单例)
+
+- `_get_vad_model()` — fsmn-vad，文件转写 VAD 预分段
+- `_get_punc_model()` — ct-punc，FireRedASR 标点恢复
+- `_get_fa_model()` — Paraformer-Large，FireRedASR 强制对齐
 
 ---
 
@@ -362,6 +489,50 @@ npm run dev
 
 ---
 
+## 说话人辨识引擎 (diarization.py)
+
+### 支持的引擎
+
+| 引擎 | 模型目录 | 实现方式 | 特点 |
+|------|---------|---------|------|
+| pyannote-3.1 | `models/diarization/pyannote-3.1/` | 端到端神经网络 | 通用性好，训练数据丰富 |
+| 3d-speaker (官方) | `models/diarization/damo/speech_campplus_speaker-diarization_common/` | ModelScope Pipeline API | **推荐**，官方优化参数，DER 4.7%-8.0% |
+| 3d-speaker (verification) | `models/diarization/3d-speaker-campplus/` | 手动 VAD + 嵌入 + 聚类 | 兼容旧模型，非官方实现 |
+
+### 3D-Speaker 官方实现 (2026-02-14 更新)
+
+**关键变更：** 使用 FunASR 手动实现完整流程，**不使用 ModelScope Pipeline**（会卡死）
+
+**实现方式：**
+- 新类：`_FunASRFullCampPlusDiarizer`
+- 手动加载三个子模型：
+  1. `speech_campplus_sv_zh-cn_16k-common` - Speaker embedding (CAM++)
+  2. `speech_campplus-transformer_scl_zh-cn_16k-common` - Change locator (可选)
+  3. `speech_fsmn_vad_zh-cn-16k-common-pytorch` - VAD
+
+**处理流程：**
+1. VAD 分段 (fsmn-vad) → 检测语音活动
+2. Speaker embedding 提取 (CAM++) → 每个片段提取特征向量
+3. Change point detection (transformer) → 优化边界（TODO）
+4. HDBSCAN 聚类 → 识别说话人
+
+**加载逻辑：**
+1. 检测 `configuration.json` 中的 `task` 字段
+2. `"speaker-diarization"` → 使用 FunASR 手动实现 (`_FunASRFullCampPlusDiarizer`)
+3. `"speaker-verification"` → 使用旧手动管线 (`_3DSpeakerDiarizer`)
+
+**依赖：**
+- `pip install funasr hdbscan`
+- 三个子模型需预下载到 `~/.cache/modelscope/hub/models/damo/`
+- 下载脚本：`python backend/scripts/download_3dspeaker_submodels.py`
+
+**接口一致性：**
+- 所有引擎返回统一的 `DiarizationResult` 对象
+- 输入：`diarize(audio_path, min_speakers, max_speakers)`
+- 输出：`{speakers: dict[str, SpeakerInfo], segments: list[Segment]}`
+
+---
+
 ## 开发阶段
 
 | 阶段 | 功能 | 状态 |
@@ -369,8 +540,10 @@ npm run dev
 | 0-5 | 核心功能 + CLI + Flet GUI | ✅ 完成 |
 | 6 | 实时流式 ASR (双引擎 + fsmn-vad) | ✅ 代码完成，待集成测试 |
 | 7 | 前后端分离 (FastAPI + React) | ✅ 完成 |
-| 8 | 功能完善和优化 | 🔄 进行中 |
-| 9 | Tauri 桌面应用打包 | 📅 待做 |
+| 8 | 多引擎 ASR + VAD 预分段 + 字级对齐 | ✅ 完成 |
+| 9 | 多引擎说话人辨识 + 性别检测 | ✅ 完成 |
+| 10 | 音频增强专业管线 | ✅ 完成 |
+| 11 | Tauri 桌面应用打包 | 📅 待做 |
 
 ---
 
@@ -415,6 +588,12 @@ npm run dev
 - PowerShell git: 用 `$ErrorActionPreference = "Continue"`
 - Python: 用完整路径 `C:\ProgramData\miniforge3\envs\meeting-ai\python.exe`
 - Terminal 编码: 中文输出在 git bash 中乱码，写文件验证
+- ecapa-gender: 不是 transformers 模型，用 PyTorchModelHubMixin + 内联架构
+- FunASR merge_vad=True: 会合并为单段输出，VAD 预分段绕过此问题
+- FireRedASR 无标点: ct-punc 后处理恢复
+- FireRedASR 无时间戳: Paraformer 强制对齐 + LCS 获取
+- librosa.resample: Python 3.13 下会挂死，用 `scipy.signal.resample_poly` 替代
+- Naming dedup: `used_names` set 防止多个说话人被分配相同名字
 
 ---
 
@@ -428,4 +607,4 @@ npm run dev
 
 ---
 
-*最后更新: 2026-02-06 (前后端分离完成，实时流式 ASR + fsmn-vad 代码完成，待集成测试)*
+*最后更新: 2026-02-09 (多引擎 ASR + VAD 预分段 + 字级对齐 + 强制对齐完成)*

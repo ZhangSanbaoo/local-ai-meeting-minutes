@@ -10,6 +10,7 @@ from .asr import (
     ASRService,
     get_asr_engine,
     get_asr_service,
+    unload_fa_model,
     unload_punc_model,
     unload_vad_model,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "get_asr_service",
     "unload_vad_model",
     "unload_punc_model",
+    "unload_fa_model",
     # Alignment
     "align_transcript_with_speakers",
     "fix_unknown_speakers",

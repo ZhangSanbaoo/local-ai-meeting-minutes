@@ -157,16 +157,37 @@ export const useAppStore = create<AppState>((set) => ({
   ...initialState,
 
   setModels: (asr, llm, diarization, gender) =>
-    set((state) => ({
-      asrModels: asr,
-      llmModels: llm,
-      diarizationModels: diarization ?? state.diarizationModels,
-      genderModels: gender ?? state.genderModels,
-      // 自动选择第一个可用的说话人分离模型
-      selectedDiarizationModel: diarization && diarization.length > 0 && !state.selectedDiarizationModel
-        ? diarization[0].name
-        : state.selectedDiarizationModel,
-    })),
+    set((state) => {
+      // 自动选择第一个可用的说话人分离模型（当前值为空或无效时）
+      let newDiarizationModel = state.selectedDiarizationModel
+      if (diarization && diarization.length > 0) {
+        // 如果当前选择为空字符串或不在新列表中，自动选择第一个
+        const isCurrentValid = state.selectedDiarizationModel &&
+          diarization.some(m => m.name === state.selectedDiarizationModel)
+        if (!isCurrentValid) {
+          newDiarizationModel = diarization[0].name
+        }
+      }
+
+      // 同样处理性别检测模型
+      let newGenderModel = state.selectedGenderModel
+      if (gender && gender.length > 0) {
+        const isCurrentValid = state.selectedGenderModel &&
+          gender.some(m => m.name === state.selectedGenderModel)
+        if (!isCurrentValid) {
+          newGenderModel = gender[0].name
+        }
+      }
+
+      return {
+        asrModels: asr,
+        llmModels: llm,
+        diarizationModels: diarization ?? state.diarizationModels,
+        genderModels: gender ?? state.genderModels,
+        selectedDiarizationModel: newDiarizationModel,
+        selectedGenderModel: newGenderModel,
+      }
+    }),
 
   setSelectedAsrModel: (model) =>
     set({ selectedAsrModel: model }),

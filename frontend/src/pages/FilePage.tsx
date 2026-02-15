@@ -902,6 +902,9 @@ export function FilePage() {
                   setResult(null)
                   setCurrentJob(null)
                   setSelectedHistoryId('')
+                  // 清空文件选择，避免用户混淆
+                  setSelectedFile(null)
+                  setMeetingName('')
                 }}
               />
               选择新文件

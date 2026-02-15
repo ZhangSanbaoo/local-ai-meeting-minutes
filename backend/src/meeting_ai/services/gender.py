@@ -655,7 +655,8 @@ def get_gender_detector(engine_name: str | None = None) -> GenderDetector:
     """获取性别检测器（工厂 + 缓存）"""
     global _detector, _detector_engine
 
-    if engine_name is None:
+    # 处理 None 或空字符串，使用配置默认值
+    if not engine_name or not engine_name.strip():
         engine_name = get_settings().gender.engine
 
     if _detector is not None and _detector_engine == engine_name:

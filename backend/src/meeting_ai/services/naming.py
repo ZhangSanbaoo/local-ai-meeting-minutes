@@ -34,9 +34,10 @@ SELF_INTRO_PATTERNS = [
 ]
 
 # 称呼他人模式（带后缀）
+# 添加边界检查，避免匹配到"跟张教授"、"将跟张教授"这样的片段
 MENTION_PATTERNS = [
-    r"(?P<n>[\u4e00-\u9fa5]{1,3})(?P<title>教授|老师|博士|主任|经理|总|医生|律师)",
-    r"请(?P<n>[\u4e00-\u9fa5]{1,3})(?P<title>教授|老师|博士|主任|经理|总)?",
+    # 前面是句首、标点、空白、或特定动词（请、问），避免误匹配"跟XX教授"中的"跟XX"
+    r"(?:^|[，,。！？：:\s]|请问?)(?P<n>[\u4e00-\u9fa5]{1,3})(?P<title>教授|老师|博士|主任|经理|总|医生|律师)",
 ]
 
 # 直接称呼模式（名字后跟标点或特定词）
@@ -226,23 +227,26 @@ class NamingService:
         
         # 构建 prompt
         names_str = "、".join(candidate_names)
-        prompt = f"""请判断以下词语是否是中文人名（昵称、小名、姓名都算）。
+        prompt = f"""请判断以下词语是否包含中文人名（昵称、小名、姓名、职称都算）。
 
 候选词语：{names_str}
 
 上下文：
 {context[:500]}
 
-请只输出是人名的词语，用逗号分隔。如果都不是人名，输出"无"。
+对于包含人名的词语，请提取出纯粹的人名部分（可以包含职称）。
+对于不包含人名的词语，忽略它。
 
 示例：
-- "小柔" → 是人名（昵称）
-- "小程序" → 不是人名（是软件）
-- "小项" → 不是人名（是"小项目"的缩写）
-- "老王" → 是人名（称呼）
-- "老师" → 不是人名（是职业）
+- "小柔" → 小柔
+- "请问张教授" → 张教授（提取出人名部分）
+- "将跟张教授" → 张教授（提取出人名部分）
+- "小程序" → （忽略，不是人名）
+- "小项目" → （忽略，不是人名）
+- "老王" → 老王
+- "老师" → （忽略，仅职业）
 
-只输出人名，不要解释："""
+只输出提取的人名，用逗号分隔。如果都没有人名，输出"无"："""
 
         try:
             response = self.llm.create_chat_completion(
@@ -256,14 +260,25 @@ class NamingService:
             
             if content == "无" or not content:
                 return []
-            
+
             # 解析返回的名字
+            # LLM 可能返回提取后的人名（如"张教授"），也可能返回原候选词
             validated = []
             for name in content.replace("，", ",").split(","):
                 name = name.strip()
-                if name and name in candidate_names:
+                if not name:
+                    continue
+
+                # 1. 直接匹配原候选词
+                if name in candidate_names:
                     validated.append(name)
-            
+                # 2. LLM 提取出的名字（可能是从"请问张教授"中提取的"张教授"）
+                # 检查这个名字是否是某个候选词的子串
+                elif any(name in cand or cand in name for cand in candidate_names):
+                    validated.append(name)
+
+            # 去重
+            validated = list(dict.fromkeys(validated))
             logger.info(f"名字验证: {candidate_names} -> {validated}")
             return validated
             

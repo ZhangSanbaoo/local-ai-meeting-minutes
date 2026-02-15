@@ -234,11 +234,12 @@ def _sync_process_audio(job_id: str) -> dict:
         # ── 1. 转换音频格式 ──
         update_progress(0.05, "转换音频格式...")
         t0 = time.time()
-        wav_path = output_dir / "audio_16k.wav"
-        ensure_wav_16k_mono(upload_path, wav_path)
+        wav_path_original = output_dir / "audio_16k.wav"
+        ensure_wav_16k_mono(upload_path, wav_path_original)
         step_times["1_audio_convert"] = time.time() - t0
 
         # ── 2. 音频增强 ──
+        wav_path_for_asr = wav_path_original  # 默认用原始音频
         enhance_mode = options.get("enhance_mode", "none")
         if enhance_mode and enhance_mode != "none":
             update_progress(0.10, "音频增强...")
@@ -246,18 +247,19 @@ def _sync_process_audio(job_id: str) -> dict:
             try:
                 from meeting_ai.utils.enhance import enhance_audio
                 enhanced_path = output_dir / "audio_enhanced.wav"
-                enhance_audio(wav_path, enhanced_path, mode=enhance_mode)
-                wav_path = enhanced_path
+                enhance_audio(wav_path_original, enhanced_path, mode=enhance_mode)
+                wav_path_for_asr = enhanced_path  # ASR 用增强后的音频
             except ImportError:
                 pass
             step_times["2_enhance"] = time.time() - t0
 
         # ── 3. 说话人分离 ──
+        # CRITICAL: diarization 必须用原始音频，保留声纹特征
         update_progress(0.15, "说话人分离...")
         t0 = time.time()
         diar_model = options.get("diarization_model")
         diar_service = get_diarization_service(diar_model)
-        diar_result = diar_service.diarize(wav_path)
+        diar_result = diar_service.diarize(wav_path_original)
         step_times["3_diarization"] = time.time() - t0
 
         diar_speakers = sorted(set(s.speaker for s in diar_result.segments if s.speaker))
@@ -272,10 +274,11 @@ def _sync_process_audio(job_id: str) -> dict:
         })
 
         # ── 4. 语音转写 ──
+        # ASR 用增强后的音频（如果有）可提升转写质量
         update_progress(0.40, "语音转写...")
         t0 = time.time()
         asr_engine = get_asr_engine(asr_model_name)
-        asr_result = asr_engine.transcribe(wav_path)
+        asr_result = asr_engine.transcribe(wav_path_for_asr)
         step_times["4_asr"] = time.time() - t0
 
         save_debug("2_asr", {
@@ -339,7 +342,8 @@ def _sync_process_audio(job_id: str) -> dict:
             t0 = time.time()
             try:
                 gender_engine = options.get("gender_model")
-                gender_map = detect_all_genders(wav_path, final_segments, engine_name=gender_engine)
+                # 性别检测用原始音频，保留声纹特征
+                gender_map = detect_all_genders(wav_path_original, final_segments, engine_name=gender_engine)
             except Exception as e:
                 logger.warning(f"性别检测失败（回退空性别信息）: {e}")
             step_times["7a_gender"] = time.time() - t0
@@ -448,7 +452,7 @@ def _sync_process_audio(job_id: str) -> dict:
             "speakers": speakers_data,
             "summary": summary_md,
             "duration": asr_result.duration,
-            "audio_path": str(wav_path),
+            "audio_path": str(wav_path_for_asr),  # 返回 ASR 使用的音频路径
         }
 
     finally:
