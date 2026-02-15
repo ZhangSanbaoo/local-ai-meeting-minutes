@@ -6,14 +6,13 @@ import * as api from '../api/client'
 import type { SystemInfo } from '../types'
 
 export function SettingsPage() {
-  const { asrModels, llmModels, diarizationModels, genderModels } = useAppStore()
+  const { asrModels, llmModels, genderModels } = useAppStore()
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState('')
   const whisperInputRef = useRef<HTMLInputElement>(null)
   const asrInputRef = useRef<HTMLInputElement>(null)
   const llmInputRef = useRef<HTMLInputElement>(null)
-  const diarInputRef = useRef<HTMLInputElement>(null)
   const genderInputRef = useRef<HTMLInputElement>(null)
 
   // 加载系统信息
@@ -123,35 +122,6 @@ export function SettingsPage() {
     }
   }, [refreshModels])
 
-  // 上传说话人分离模型
-  const handleDiarUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    if (!file.name.endsWith('.zip') && !file.name.endsWith('.tar.gz')) {
-      alert('只支持 .zip 或 .tar.gz 格式')
-      return
-    }
-
-    setIsUploading(true)
-    setUploadProgress(`上传说话人分离模型: ${file.name}...`)
-
-    try {
-      await api.uploadDiarizationModel(file)
-      await refreshModels()
-      alert('上传成功')
-    } catch (err) {
-      console.error('上传失败:', err)
-      alert('上传失败，请重试')
-    } finally {
-      setIsUploading(false)
-      setUploadProgress('')
-      if (diarInputRef.current) {
-        diarInputRef.current.value = ''
-      }
-    }
-  }, [refreshModels])
-
   // 上传性别检测模型
   const handleGenderUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -213,19 +183,6 @@ export function SettingsPage() {
 
     try {
       await api.deleteLlmModel(modelName)
-      await refreshModels()
-    } catch (err) {
-      console.error('删除失败:', err)
-      alert('删除失败')
-    }
-  }, [refreshModels])
-
-  // 删除说话人分离模型
-  const handleDeleteDiar = useCallback(async (modelName: string) => {
-    if (!confirm(`确定要删除说话人分离模型 "${modelName}" 吗？`)) return
-
-    try {
-      await api.deleteDiarizationModel(modelName)
       await refreshModels()
     } catch (err) {
       console.error('删除失败:', err)
@@ -460,72 +417,6 @@ export function SettingsPage() {
           )}
         </section>
 
-        {/* 说话人分离模型管理 */}
-        <section className="bg-white rounded-lg shadow p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <HardDrive className="w-5 h-5" />
-              说话人分离模型
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => diarInputRef.current?.click()}
-                disabled={isUploading}
-                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300"
-              >
-                <Upload className="w-4 h-4" />
-                上传模型
-              </button>
-              <input
-                ref={diarInputRef}
-                type="file"
-                accept=".zip,.tar.gz"
-                className="hidden"
-                onChange={handleDiarUpload}
-              />
-            </div>
-          </div>
-
-          <div className="text-sm text-gray-500 mb-4 space-y-1">
-            <p>上传 .zip 或 .tar.gz 压缩包，系统根据文件特征自动识别引擎：</p>
-            <ul className="list-disc list-inside ml-2 text-xs space-y-0.5">
-              <li><span className="font-medium text-blue-600">pyannote</span> — 含 config.yaml（pyannote-audio Pipeline 格式）</li>
-              <li><span className="font-medium text-green-600">3D-Speaker / ModelScope</span> — 含 configuration.json</li>
-            </ul>
-            <p className="text-xs">不符合以上格式的模型无法使用。同框架内的模型可自由替换。</p>
-          </div>
-
-          {diarizationModels.length > 0 ? (
-            <div className="space-y-2">
-              {diarizationModels.map((model) => (
-                <div
-                  key={model.name}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div>
-                    <span className="font-medium">{model.display_name}</span>
-                    {model.size_mb != null && (
-                      <span className="text-gray-500 text-sm ml-2">
-                        ({model.size_mb > 1024 ? `${(model.size_mb / 1024).toFixed(1)} GB` : `${model.size_mb} MB`})
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleDeleteDiar(model.name)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded"
-                    title="删除"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center text-gray-400 py-8">
-              暂无说话人分离模型，请上传或手动放入 models/diarization/ 目录
-            </div>
-          )}
-        </section>
 
         {/* 性别检测模型管理 */}
         <section className="bg-white rounded-lg shadow p-6">

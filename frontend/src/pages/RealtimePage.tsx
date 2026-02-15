@@ -31,9 +31,7 @@ export function RealtimePage() {
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
   const [selectedLlm, setSelectedLlm] = useState('')
 
-  // Diarization + Gender models
-  const [diarizationModels, setDiarizationModels] = useState<ModelInfo[]>([])
-  const [selectedDiarModel, setSelectedDiarModel] = useState('')
+  // Gender models
   const [genderModels, setGenderModels] = useState<ModelInfo[]>([])
   const [selectedGenderModel, setSelectedGenderModel] = useState('f0')
 
@@ -51,11 +49,6 @@ export function RealtimePage() {
         setLlmModels(res.llm_models)
         const defaultLlm = res.llm_models.find((m) => m.name !== 'disabled')
         setSelectedLlm(defaultLlm?.name || 'disabled')
-
-        setDiarizationModels(res.diarization_models)
-        if (res.diarization_models.length > 0) {
-          setSelectedDiarModel(res.diarization_models[0].name)
-        }
 
         setGenderModels(res.gender_models)
         if (res.gender_models.length > 0) {
@@ -299,7 +292,6 @@ export function RealtimePage() {
       enableCorrection,
       enableSummary,
       asrEngine: selectedEngine || undefined,
-      diarizationModel: selectedDiarModel || undefined,
       genderModel: selectedGenderModel || undefined,
     })
 
@@ -440,25 +432,6 @@ export function RealtimePage() {
           </select>
         </div>
 
-        {/* 说话人分离模型 */}
-        {diarizationModels.length > 0 && (
-          <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 whitespace-nowrap">分离</span>
-            <select
-              value={selectedDiarModel}
-              onChange={(e) => setSelectedDiarModel(e.target.value)}
-              disabled={controlsDisabled}
-              className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[240px]"
-              title="说话人分离模型"
-            >
-              {diarizationModels.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.display_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
 
         {/* 性别检测模型 */}
         <div className="flex items-center gap-1">
