@@ -19,11 +19,9 @@ interface AppState {
   // 模型
   asrModels: ModelInfo[]
   llmModels: ModelInfo[]
-  diarizationModels: ModelInfo[]
   genderModels: ModelInfo[]
   selectedAsrModel: string
   selectedLlmModel: string
-  selectedDiarizationModel: string
   selectedGenderModel: string
 
   // 处理选项
@@ -69,10 +67,9 @@ interface AppState {
   postProcessStep: string
 
   // Actions
-  setModels: (asr: ModelInfo[], llm: ModelInfo[], diarization?: ModelInfo[], gender?: ModelInfo[]) => void
+  setModels: (asr: ModelInfo[], llm: ModelInfo[], gender?: ModelInfo[]) => void
   setSelectedAsrModel: (model: string) => void
   setSelectedLlmModel: (model: string) => void
-  setSelectedDiarizationModel: (model: string) => void
   setSelectedGenderModel: (model: string) => void
   setProcessOptions: (options: Partial<{
     enableNaming: boolean
@@ -115,11 +112,9 @@ const initialState = {
   activeTab: 'file' as TabType,
   asrModels: [],
   llmModels: [],
-  diarizationModels: [],
   genderModels: [],
   selectedAsrModel: 'medium',
   selectedLlmModel: 'disabled',
-  selectedDiarizationModel: '',
   selectedGenderModel: 'f0',
   enableNaming: true,
   enableCorrection: true,
@@ -156,20 +151,9 @@ const initialState = {
 export const useAppStore = create<AppState>((set) => ({
   ...initialState,
 
-  setModels: (asr, llm, diarization, gender) =>
+  setModels: (asr, llm, gender) =>
     set((state) => {
-      // 自动选择第一个可用的说话人分离模型（当前值为空或无效时）
-      let newDiarizationModel = state.selectedDiarizationModel
-      if (diarization && diarization.length > 0) {
-        // 如果当前选择为空字符串或不在新列表中，自动选择第一个
-        const isCurrentValid = state.selectedDiarizationModel &&
-          diarization.some(m => m.name === state.selectedDiarizationModel)
-        if (!isCurrentValid) {
-          newDiarizationModel = diarization[0].name
-        }
-      }
-
-      // 同样处理性别检测模型
+      // 自动选择第一个可用的性别检测模型
       let newGenderModel = state.selectedGenderModel
       if (gender && gender.length > 0) {
         const isCurrentValid = state.selectedGenderModel &&
@@ -182,9 +166,7 @@ export const useAppStore = create<AppState>((set) => ({
       return {
         asrModels: asr,
         llmModels: llm,
-        diarizationModels: diarization ?? state.diarizationModels,
         genderModels: gender ?? state.genderModels,
-        selectedDiarizationModel: newDiarizationModel,
         selectedGenderModel: newGenderModel,
       }
     }),
@@ -194,9 +176,6 @@ export const useAppStore = create<AppState>((set) => ({
 
   setSelectedLlmModel: (model) =>
     set({ selectedLlmModel: model }),
-
-  setSelectedDiarizationModel: (model) =>
-    set({ selectedDiarizationModel: model }),
 
   setSelectedGenderModel: (model) =>
     set({ selectedGenderModel: model }),

@@ -51,7 +51,6 @@ async def create_process_job(
     asr_model: Optional[str] = Form(default=None),  # 统一 ASR 模型（新）
     whisper_model: str = Form(default="medium"),     # 向后兼容
     llm_model: Optional[str] = Form(default=None),
-    diarization_model: Optional[str] = Form(default=None),
     gender_model: Optional[str] = Form(default=None),
     enable_naming: bool = Form(default=True),
     enable_correction: bool = Form(default=True),
@@ -105,7 +104,6 @@ async def create_process_job(
             "asr_model": asr_model or whisper_model,  # 优先用 asr_model
             "whisper_model": whisper_model,            # 向后兼容
             "llm_model": llm_model,
-            "diarization_model": diarization_model,
             "gender_model": gender_model,
             "enable_naming": enable_naming,
             "enable_correction": enable_correction,
@@ -228,8 +226,8 @@ def _sync_process_audio(job_id: str) -> dict:
             "options": options,
             "models_used": {
                 "asr": asr_model_name,
-                "diarization": options.get("diarization_model") or "default",
-                "gender": options.get("gender_model") or "default",
+                "diarization": "pyannote-3.1",
+                "gender": options.get("gender_model") or "f0",
                 "llm": options.get("llm_model") or "disabled",
             },
         })
@@ -260,8 +258,7 @@ def _sync_process_audio(job_id: str) -> dict:
         # CRITICAL: diarization 必须用原始音频，保留声纹特征
         update_progress(0.15, "说话人分离...")
         t0 = time.time()
-        diar_model = options.get("diarization_model")
-        diar_service = get_diarization_service(diar_model)
+        diar_service = get_diarization_service("pyannote-3.1")
         diar_result = diar_service.diarize(wav_path_original)
         step_times["3_diarization"] = time.time() - t0
 
@@ -344,7 +341,7 @@ def _sync_process_audio(job_id: str) -> dict:
             # 7a. 性别检测
             t0 = time.time()
             try:
-                gender_engine = options.get("gender_model")
+                gender_engine = options.get("gender_model") or "f0"
                 # 性别检测用原始音频，保留声纹特征
                 gender_map = detect_all_genders(wav_path_original, final_segments, engine_name=gender_engine)
             except Exception as e:
@@ -432,8 +429,8 @@ def _sync_process_audio(job_id: str) -> dict:
             "options": options,
             "models_used": {
                 "asr": asr_model_name,
-                "diarization": diar_model or "default",
-                "gender": options.get("gender_model") or "default",
+                "diarization": "pyannote-3.1",
+                "gender": options.get("gender_model") or "f0",
                 "llm": options.get("llm_model") or "disabled",
                 "enhance": enhance_mode,
             },

@@ -427,17 +427,11 @@ _service_model: str | None = None
 
 
 def get_diarization_service(model_name: str | None = None) -> DiarizationService:
-    """获取说话人分离服务（支持按模型名切换）"""
+    """获取说话人分离服务（硬编码使用 pyannote-3.1）"""
     global _service, _service_model
 
-    # 处理 None 或空字符串，使用配置默认值
-    if not model_name or not model_name.strip():
-        model_name = get_settings().diarization.engine
-
-    if _service is not None and _service_model != model_name:
-        logger.info(f"说话人分离引擎切换: {_service_model} → {model_name}")
-        _service.unload()
-        _service = None
+    # 硬编码使用 pyannote-3.1
+    model_name = "pyannote-3.1"
 
     if _service is None:
         _service = DiarizationService(model_name)

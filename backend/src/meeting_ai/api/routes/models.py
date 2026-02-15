@@ -18,6 +18,13 @@ from meeting_ai.config import get_settings
 from meeting_ai.services.asr import detect_engine_type
 from meeting_ai.services.streaming_asr import list_available_engines
 
+# 已知性别检测模型的元数据
+GENDER_MODEL_META: dict[str, dict[str, str]] = {
+    "f0": {"metric": "≈90%", "vram": "CPU", "label": "基频分析 (内置)"},
+    "ecapa-gender": {"metric": "≈97%", "vram": "≈0.3G", "label": "ECAPA-TDNN"},
+    "wav2vec2-gender": {"metric": "≈95%", "vram": "≈1.5G", "label": "Wav2Vec2"},
+}
+
 # 已知 ASR 模型的元数据（CER 取自 AISHELL-1 基准，VRAM 为 float16 推理估算）
 ASR_MODEL_META: dict[str, dict[str, str]] = {
     # faster-whisper (name 是去掉 faster-whisper- 前缀后的)
@@ -35,17 +42,6 @@ ASR_MODEL_META: dict[str, dict[str, str]] = {
     "fireredasr-aed": {"cer": "0.6%", "vram": "≈3G", "label": "FireRedASR-AED"},
 }
 
-# 已知说话人分离模型的元数据（DER 取自 AMI/DIHARD 基准）
-DIAR_MODEL_META: dict[str, dict[str, str]] = {
-    "pyannote-3.1": {"metric": "DER 11%", "vram": "≈2G", "label": "pyannote 3.1 (推荐)"},
-    }
-
-# 已知性别检测模型的元数据
-GENDER_MODEL_META: dict[str, dict[str, str]] = {
-    "f0": {"metric": "≈90%", "vram": "CPU", "label": "基频分析 (内置)"},
-    "ecapa-gender": {"metric": "≈97%", "vram": "≈0.3G", "label": "ECAPA-TDNN"},
-    "wav2vec2-gender": {"metric": "≈95%", "vram": "≈1.5G", "label": "Wav2Vec2"},
-}
 
 router = APIRouter()
 
@@ -64,20 +60,13 @@ async def list_models():
             return f"{meta['label']} ({meta['cer']} {meta['vram']})"
         return f"{name} ({size_mb:.0f}MB)"
 
-    def _build_diar_display_name(name: str, size_mb: float) -> str:
-        """构建说话人分离 display_name"""
-        # 提取目录名（处理 damo/xxx 这样的路径）
-        basename = name.split("/")[-1]
-        meta = DIAR_MODEL_META.get(basename)
-        if meta:
-            return f"{meta['label']} ({meta['metric']} {meta['vram']})"
-        return f"{basename} ({size_mb:.0f}MB)"
-
     def _build_gender_display_name(name: str, size_mb: float) -> str:
         """构建性别检测 display_name"""
         meta = GENDER_MODEL_META.get(name)
         if meta:
             return f"{meta['label']} ({meta['metric']} {meta['vram']})"
+        return f"{name} ({size_mb:.0f}MB)"
+
         return f"{name} ({size_mb:.0f}MB)"
 
     # 扫描 Whisper 模型 (models/whisper/)
@@ -138,52 +127,6 @@ async def list_models():
                 size_mb=round(size_mb, 1),
             ))
 
-    # 扫描说话人分离模型
-    diarization_models = []
-    diar_dir = settings.paths.models_dir / "diarization"
-    if diar_dir.exists():
-        # 优先排序：pyannote > 其他（按字母排序）
-        def _diar_sort_key(path):
-            name = path.name
-            if name.startswith("pyannote"):
-                return (0, name)  # pyannote 排最前
-            else:
-                return (1, name)  # 其他按字母排序
-
-        # 收集所有有效的模型目录（包括二级子目录，如 damo/*）
-        model_dirs = []
-
-        for d in diar_dir.iterdir():
-            if d.is_dir():
-                # 检查是否是有效的模型目录
-                if (
-                    (d / "config.yaml").exists()       # pyannote 系列
-                    or any(d.glob("*.onnx"))           # ONNX 模型
-                ):
-                    model_dirs.append(d)
-                else:
-                    # 可能是组织目录（如 damo/），扫描其子目录
-                    for sub_d in d.iterdir():
-                        if sub_d.is_dir() and (
-                            (sub_d / "config.yaml").exists()
-                            or (sub_d / "configuration.json").exists()
-                            or any(sub_d.glob("*.onnx"))
-                        ):
-                            model_dirs.append(sub_d)
-
-        # 排序并构建响应
-        for d in sorted(model_dirs, key=_diar_sort_key):
-            size_mb = sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / (1024 * 1024)
-            # 使用相对于 diarization/ 的路径作为 name（如 damo/speech_campplus_speaker-diarization_common）
-            rel_path = d.relative_to(diar_dir)
-            name = str(rel_path).replace("\\", "/")  # Windows 路径转换为 /
-            diarization_models.append(ModelInfoResponse(
-                name=name,
-                display_name=_build_diar_display_name(d.name, size_mb),
-                path=str(d),
-                size_mb=round(size_mb, 1),
-            ))
-
     # 扫描性别检测模型
     gender_models = [
         ModelInfoResponse(
@@ -214,7 +157,6 @@ async def list_models():
         asr_models=asr_models,
         whisper_models=whisper_models,
         llm_models=llm_models,
-        diarization_models=diarization_models,
         gender_models=gender_models,
     )
 

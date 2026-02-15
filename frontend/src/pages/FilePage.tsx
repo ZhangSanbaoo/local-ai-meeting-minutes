@@ -20,15 +20,12 @@ export function FilePage() {
     // 模型
     asrModels,
     llmModels,
-    diarizationModels,
     genderModels,
     selectedAsrModel,
     selectedLlmModel,
-    selectedDiarizationModel,
     selectedGenderModel,
     setSelectedAsrModel,
     setSelectedLlmModel,
-    setSelectedDiarizationModel,
     setSelectedGenderModel,
 
     // 选项
@@ -118,12 +115,7 @@ export function FilePage() {
     try {
       const data = await api.getModels()
       const asr = data.asr_models?.length ? data.asr_models : data.whisper_models
-      useAppStore.getState().setModels(
-        asr,
-        data.llm_models,
-        data.diarization_models,
-        data.gender_models,
-      )
+      useAppStore.getState().setModels(asr, data.llm_models, data.gender_models)
       // 不自动选择第一个模型，强制用户手动选择
       // if (asr.length > 0 && !selectedAsrModel) {
       //   setSelectedAsrModel(asr[0].name)
@@ -240,7 +232,6 @@ export function FilePage() {
         name: meetingName.trim() || undefined,  // 自定义会议名称
         asr_model: selectedAsrModel,
         llm_model: selectedLlmModel !== 'disabled' ? selectedLlmModel : undefined,
-        diarization_model: selectedDiarizationModel || undefined,
         gender_model: selectedGenderModel || undefined,
         enable_naming: enableNaming,
         enable_correction: enableCorrection,
@@ -829,24 +820,6 @@ export function FilePage() {
               ))}
             </select>
           </div>
-
-          {diarizationModels.length > 0 && (
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-500 whitespace-nowrap">分离</span>
-              <select
-                value={selectedDiarizationModel}
-                onChange={(e) => setSelectedDiarizationModel(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[130px]"
-                title="说话人分离模型"
-              >
-                {diarizationModels.map((m) => (
-                  <option key={m.name} value={m.name}>
-                    {m.display_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="flex items-center gap-1">
             <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>

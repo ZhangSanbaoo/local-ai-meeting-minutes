@@ -26,12 +26,7 @@ export function SettingsPage() {
     try {
       const data = await api.getModels()
       const asr = data.asr_models?.length ? data.asr_models : data.whisper_models
-      useAppStore.getState().setModels(
-        asr,
-        data.llm_models,
-        data.diarization_models,
-        data.gender_models,
-      )
+      useAppStore.getState().setModels(asr, data.llm_models, data.gender_models)
     } catch (err) {
       console.error('加载模型列表失败:', err)
     }
