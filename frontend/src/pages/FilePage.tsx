@@ -124,9 +124,10 @@ export function FilePage() {
         data.diarization_models,
         data.gender_models,
       )
-      if (asr.length > 0 && !selectedAsrModel) {
-        setSelectedAsrModel(asr[0].name)
-      }
+      // 不自动选择第一个模型，强制用户手动选择
+      // if (asr.length > 0 && !selectedAsrModel) {
+      //   setSelectedAsrModel(asr[0].name)
+      // }
     } catch (err) {
       console.error('加载模型列表失败:', err)
     }
@@ -224,6 +225,12 @@ export function FilePage() {
     }
 
     if (!selectedFile) return
+
+    // 验证必选项
+    if (!selectedAsrModel) {
+      alert('请选择语音识别模型')
+      return
+    }
 
     setProcessing(true)
     setProgress(0, '上传文件...')
@@ -777,6 +784,7 @@ export function FilePage() {
               className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[150px]"
               title="语音识别模型"
             >
+              <option value="">请选择</option>
               {(() => {
                 const grouped: Record<string, typeof asrModels> = {}
                 for (const m of asrModels) {

@@ -105,26 +105,16 @@ ASR_MODELS = [
 
 DIAR_MODELS = [
     ModelDef(
-        name="pyannote-community-1",
+        name="pyannote-3.1",
         category="diar",
-        target_dir=MODELS_DIR / "diarization" / "pyannote-community-1",
+        target_dir=MODELS_DIR / "diarization" / "pyannote-3.1",
         source="huggingface",
-        repo_id="pyannote/speaker-diarization-community-1",
-        description="pyannote community-1 · CC-BY-4.0 · DER ~15%",
-        size_hint="~300 MB",
-        note="pyannote 4.0 社区模型，自包含全部子模型。需要 HF_TOKEN（接受许可后即可）",
+        repo_id="pyannote/speaker-diarization-3.1",
+        description="pyannote 3.1 · MIT License · DER ~11%",
+        size_hint="~500 MB",
+        note="pyannote 3.1 生产级模型。需要 HF_TOKEN（接受许可后即可）",
     ),
-    ModelDef(
-        name="3d-speaker-campplus",
-        category="diar",
-        target_dir=MODELS_DIR / "diarization" / "3d-speaker-campplus",
-        source="modelscope",
-        repo_id="iic/speech_campplus_sv_zh-cn_16k-common",
-        description="3D-Speaker CAM++ · 阿里达摩院",
-        size_hint="~100 MB",
-        note="中文场景优化的说话人嵌入模型",
-    ),
-]
+    ]
 
 # ── 性别检测模型 ──
 
@@ -439,6 +429,7 @@ def main():
     parser.add_argument("--diar", action="store_true", help="下载说话人分离模型")
     parser.add_argument("--gender", action="store_true", help="下载性别检测模型")
     parser.add_argument("--list", action="store_true", help="列出所有模型信息")
+    parser.add_argument("-y", "--yes", action="store_true", help="跳过确认，直接下载")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -486,10 +477,11 @@ def main():
         print(f"  -> {m.name} ({m.size_hint})")
 
     print()
-    confirm = input("确认开始下载？(y/N): ").strip().lower()
-    if confirm != "y":
-        print("已取消。")
-        return
+    if not args.yes:
+        confirm = input("确认开始下载？(y/N): ").strip().lower()
+        if confirm != "y":
+            print("已取消。")
+            return
 
     # 下载
     results = {}

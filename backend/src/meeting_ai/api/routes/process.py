@@ -207,7 +207,10 @@ def _sync_process_audio(job_id: str) -> dict:
 
     try:
         # 配置模型
-        asr_model_name = options.get("asr_model") or options.get("whisper_model", "medium")
+        asr_model_name = options.get("asr_model") or options.get("whisper_model")
+        if not asr_model_name:
+            raise ValueError("请选择 ASR 语音识别模型")
+
         use_llm = options["llm_model"] and options["llm_model"] != "disabled"
         if use_llm:
             settings.llm.enabled = True

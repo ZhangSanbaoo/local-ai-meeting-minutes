@@ -37,11 +37,8 @@ ASR_MODEL_META: dict[str, dict[str, str]] = {
 
 # 已知说话人分离模型的元数据（DER 取自 AMI/DIHARD 基准）
 DIAR_MODEL_META: dict[str, dict[str, str]] = {
-    "pyannote-3.1": {"metric": "DER 11%", "vram": "≈2G", "label": "pyannote 3.1"},
-    "pyannote-community-1": {"metric": "DER 15%", "vram": "≈1.5G", "label": "pyannote community"},
-    "3d-speaker-campplus": {"metric": "EER 5%", "vram": "≈0.5G", "label": "CAM++ (verification)"},
-    "speech_campplus_speaker-diarization_common": {"metric": "DER 4.7-8%", "vram": "≈1G", "label": "CAM++ Diarization (官方)"},
-}
+    "pyannote-3.1": {"metric": "DER 11%", "vram": "≈2G", "label": "pyannote 3.1 (推荐)"},
+    }
 
 # 已知性别检测模型的元数据
 GENDER_MODEL_META: dict[str, dict[str, str]] = {
@@ -161,7 +158,6 @@ async def list_models():
                 # 检查是否是有效的模型目录
                 if (
                     (d / "config.yaml").exists()       # pyannote 系列
-                    or (d / "configuration.json").exists()  # ModelScope / 3D-Speaker 系列
                     or any(d.glob("*.onnx"))           # ONNX 模型
                 ):
                     model_dirs.append(d)

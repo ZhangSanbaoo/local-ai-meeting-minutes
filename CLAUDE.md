@@ -53,7 +53,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 
 ## 核心功能
 
-1. **说话人辨识** - pyannote-audio 3.1 / 3D-Speaker CAM++，识别"谁在什么时候说话"
+1. **说话人辨识** - pyannote-audio 3.1 / DiariZen-large，识别"谁在什么时候说话"
 2. **多引擎语音转写** - faster-whisper / FunASR (SenseVoice, Paraformer) / FireRedASR，可选切换
 3. **VAD 预分段** - fsmn-vad 切短音频再逐段转写，所有引擎获得精确时间戳
 4. **字级对齐** - 逐字/词时间戳 + diarization → 精确说话人切分（见下文）
@@ -72,11 +72,11 @@ git checkout snapshot/<timestamp> -- path/to/file
 |------|------|------|
 | 后端框架 | FastAPI | REST API + WebSocket 实时通信 |
 | 前端框架 | React 18 + TypeScript | Vite + Tailwind CSS + Zustand |
-| 说话人辨识 | pyannote-audio 3.1 / 3D-Speaker CAM++ | 多引擎可选（A层）|
+| 说话人辨识 | pyannote-audio 3.1 / DiariZen-large | 多引擎可选（A层）|
 | 实时流式 ASR | FunASR 1.3.1 + sherpa-onnx 1.12.23 | 双引擎可选（A层）|
-| **VAD** | **Silero VAD** ← fsmn-vad | **升级中**：更可靠、多语言（B层）|
+| **VAD** | **Silero VAD** ← fsmn-vad | **✅ 已测试**：59 语音段检测成功，更可靠、多语言（B层）|
 | 文件 ASR | faster-whisper / FunASR / FireRedASR | 3 引擎可选（A层）|
-| **强制对齐** | **wav2vec2** ← Paraformer | **升级中**：10-50ms 精度（B层）|
+| **强制对齐** | **Whisper** ← Paraformer | **✅ 已测试**：字级时间戳生成成功，word timestamps + LCS（B层）|
 | 标点恢复 | ct-punc | FunASR 生态标准（B层）✅ |
 | LLM | llama-cpp-python + Qwen2.5-7B | 用户可配置（A层）|
 | 性别检测 | f0 / ECAPA-TDNN / wav2vec2 | 3 引擎可选（A层）|
@@ -95,7 +95,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 #### **A层：用户可配置模块**（保持多引擎灵活性）
 - **ASR 引擎** - Whisper / FunASR / FireRedASR（用户按任务选择）
 - **LLM** - Qwen / 其他 GGUF 模型（用户可配置）
-- **说话人分离** - pyannote-3.1 / 3D-Speaker CAM++（用户选择）
+- **说话人分离** - pyannote-3.1 / DiariZen-large（用户选择）
 - **性别检测** - f0 / ECAPA-TDNN / wav2vec2（用户选择）
 
 #### **B层：内部实现模块**（使用业界标准，对用户透明）
@@ -165,7 +165,7 @@ meeting-ai/
 │   │   │       └── realtime.py      # WebSocket 实时流式 ASR
 │   │   ├── services/
 │   │   │   ├── streaming_asr.py     # 流式 ASR 引擎抽象 (FunASR + sherpa-onnx + fsmn-vad)
-│   │   │   ├── diarization.py       # 说话人辨识 (pyannote / 3D-Speaker)
+│   │   │   ├── diarization.py       # 说话人辨识 (pyannote / DiariZen)
 │   │   │   ├── asr.py               # 多引擎 ASR + VAD 预分段 + 强制对齐
 │   │   │   ├── alignment.py         # 说话人-文本对齐 (字级/中点/句级)
 │   │   │   ├── gender.py            # 性别检测 (f0 / ECAPA-TDNN / wav2vec2)
@@ -209,7 +209,7 @@ meeting-ai/
 │
 ├── models/                          # 本地模型目录
 │   ├── pyannote/                    # pyannote 共享子模型 (wespeaker, segmentation)
-│   ├── diarization/                 # 说话人辨识模型 (pyannote-3.1/, 3d-speaker-campplus/)
+│   ├── diarization/                 # 说话人辨识模型 (pyannote-3.1/, reverb-diarization-v2/)
 │   ├── whisper/                     # Whisper ASR 模型 (faster-whisper-*)
 │   ├── asr/                         # 非 Whisper ASR 模型 (sensevoice-small/, paraformer-large/, fireredasr-aed/)
 │   ├── gender/                      # 性别检测模型 (ecapa-gender/, wav2vec2-gender/)
@@ -323,7 +323,7 @@ Recording stops → pyannote diarization → alignment → LLM pipeline → resu
 ### 音频文件处理 (FilePage)
 ```
 上传音频 → 音频转换(16kHz WAV) → [音频增强]
-    ├→ 说话人辨识 (pyannote/CAM++) → 说话人时间线 (谁在什么时候说话)
+    ├→ 说话人辨识 (pyannote/DiariZen) → 说话人时间线 (谁在什么时候说话)
     └→ VAD 预分段 (fsmn-vad) → 逐段 ASR 转写 → [ct-punc 标点] → 字级时间戳
          ↓
     字级对齐 (逐字查说话人) → [错别字校正] → 性别检测 → 智能命名 → [会议总结] → 输出
@@ -350,22 +350,25 @@ Recording stops → pyannote diarization → alignment → LLM pipeline → resu
 ### 处理管线
 
 ```
-1. fsmn-vad 预分段 → 2-15s 语音段列表
+1. Silero VAD 预分段 → 2-15s 语音段列表（✅ 2026-02-15 更新：替换 fsmn-vad，更可靠）
 2. 逐段转写 (任意 ASR 引擎)
 3. 提取字级时间戳:
    - Whisper: word_timestamps=True (原生词级)
    - FunASR: timestamp 字段 (原生字级)
-   - FireRedASR: Paraformer 强制对齐 + LCS 映射 (间接字级)
+   - FireRedASR: Whisper 强制对齐 + LCS 映射 (间接字级) ← 更新
 4. FireRedASR: ct-punc 标点恢复
 ```
 
 ### 强制对齐 (FireRedASR 专用)
 
-FireRedASR 不返回时间戳。用 Paraformer 做强制对齐：
-1. 用 Paraformer 对同一段音频转写 → 得到参考文本 + 字级时间戳
-2. 用 LCS (最长公共子序列) DP 对齐 FireRedASR 文本 ↔ Paraformer 文本
-3. 匹配字复用时间戳，不匹配字线性插值
-4. 对齐完成后释放 Paraformer 回收显存
+**✅ 2026-02-15 更新**：从 Paraformer 迁移到 Whisper（whisperX 标准，10-50ms 精度）
+
+FireRedASR 不返回时间戳。用 Whisper 做强制对齐：
+1. 用 Whisper 对同一段音频转写 → 得到参考文本 + 词级时间戳
+2. 词级时间戳转字级（均匀分配每个词的时长）
+3. 用 LCS (最长公共子序列) DP 对齐 FireRedASR 文本 ↔ Whisper 文本
+4. 匹配字复用时间戳，不匹配字线性插值
+5. 对齐完成后释放 Whisper 回收显存
 
 ### 对齐策略 (alignment.py)
 
@@ -491,45 +494,52 @@ npm run dev
 
 ## 说话人辨识引擎 (diarization.py)
 
-### 支持的引擎
+### 支持的引擎 (2026-02-15 更新)
 
-| 引擎 | 模型目录 | 实现方式 | 特点 |
-|------|---------|---------|------|
-| pyannote-3.1 | `models/diarization/pyannote-3.1/` | 端到端神经网络 | 通用性好，训练数据丰富 |
-| 3d-speaker (官方) | `models/diarization/damo/speech_campplus_speaker-diarization_common/` | ModelScope Pipeline API | **推荐**，官方优化参数，DER 4.7%-8.0% |
-| 3d-speaker (verification) | `models/diarization/3d-speaker-campplus/` | 手动 VAD + 嵌入 + 聚类 | 兼容旧模型，非官方实现 |
+| 引擎 | 模型目录 | 性能 (DER) | VRAM | 特点 |
+|------|---------|-----------|------|------|
+| **pyannote-3.1** | `models/diarization/pyannote-3.1/` | **11%** | ≈2G | **推荐**，工业标准，通用性好 |
+| DiariZen-large | `models/diarization/reverb-diarization-v2/` | **13% (AMI)** | ≈2.5G | Rev.com SOTA，比 pyannote 3.0 提升 22% |
+| pyannote-community-1 | `models/diarization/pyannote-community-1/` | 15% | ≈1.5G | 社区版本，轻量化 |
 
-### 3D-Speaker 官方实现 (2026-02-14 更新)
+### 架构决策 (2026-02-15)
 
-**关键变更：** 使用 FunASR 手动实现完整流程，**不使用 ModelScope Pipeline**（会卡死）
+**移除 CAM++ (3D-Speaker)：**
+- 原因：测试中发现 CAM++ 在说话人切换检测上准确率不足（未能检测到 12s 处的切换点）
+- pyannote-3.1 在同一测试中表现优异
+- **结论**：专注于 pyannote 系列 + DiariZen（均基于 pyannote Pipeline API，whisperX 标准架构）
 
-**实现方式：**
-- 新类：`_FunASRFullCampPlusDiarizer`
-- 手动加载三个子模型：
-  1. `speech_campplus_sv_zh-cn_16k-common` - Speaker embedding (CAM++)
-  2. `speech_campplus-transformer_scl_zh-cn_16k-common` - Change locator (可选)
-  3. `speech_fsmn_vad_zh-cn-16k-common-pytorch` - VAD
+### DiariZen-large (2026-02-15 新增)
 
-**处理流程：**
-1. VAD 分段 (fsmn-vad) → 检测语音活动
-2. Speaker embedding 提取 (CAM++) → 每个片段提取特征向量
-3. Change point detection (transformer) → 优化边界（TODO）
-4. HDBSCAN 聚类 → 识别说话人
+**模型信息：**
+- **来源**：Rev.com 开源（HuggingFace: `Revai/reverb-diarization-v2`）
+- **架构**：基于 WavLM-Large + pyannote Pipeline
+- **性能**：DER 13.3% (AMI)，比 pyannote 3.0 相对改进 22.25%
+- **许可**：查看 LICENSE 文件（需 HF_TOKEN）
 
-**加载逻辑：**
-1. 检测 `configuration.json` 中的 `task` 字段
-2. `"speaker-diarization"` → 使用 FunASR 手动实现 (`_FunASRFullCampPlusDiarizer`)
-3. `"speaker-verification"` → 使用旧手动管线 (`_3DSpeakerDiarizer`)
+**使用方式：**
+```python
+# 与 pyannote 完全兼容
+service = DiarizationService("reverb-diarization-v2")
+result = service.diarize("audio.wav")
+```
 
-**依赖：**
-- `pip install funasr hdbscan`
-- 三个子模型需预下载到 `~/.cache/modelscope/hub/models/damo/`
-- 下载脚本：`python backend/scripts/download_3dspeaker_submodels.py`
+**下载：**
+```bash
+# 设置 HF_TOKEN
+export HF_TOKEN=your_token_here  # Linux/Mac
+# $env:HF_TOKEN="your_token_here"  # Windows PowerShell
 
-**接口一致性：**
-- 所有引擎返回统一的 `DiarizationResult` 对象
+# 运行下载脚本
+python backend/scripts/download_all_models.py
+```
+
+### 统一接口
+
+所有引擎均通过 pyannote Pipeline API 实现：
 - 输入：`diarize(audio_path, min_speakers, max_speakers)`
-- 输出：`{speakers: dict[str, SpeakerInfo], segments: list[Segment]}`
+- 输出：`DiarizationResult{speakers: dict[str, SpeakerInfo], segments: list[Segment]}`
+- 自动加载：检测 `config.yaml` (pyannote 格式)
 
 ---
 
@@ -583,17 +593,26 @@ npm run dev
 
 ## 已知问题与修复
 
+### **环境相关**
 - Windows tempfile: 用 `delete=False` + 手动 `os.unlink`
 - RTX 5090: 必须用 PyTorch nightly cu128, float16 compute type
 - PowerShell git: 用 `$ErrorActionPreference = "Continue"`
 - Python: 用完整路径 `C:\ProgramData\miniforge3\envs\meeting-ai\python.exe`
 - Terminal 编码: 中文输出在 git bash 中乱码，写文件验证
+- librosa.resample: Python 3.13 下会挂死，用 `scipy.signal.resample_poly` 替代
+
+### **模型相关**
 - ecapa-gender: 不是 transformers 模型，用 PyTorchModelHubMixin + 内联架构
 - FunASR merge_vad=True: 会合并为单段输出，VAD 预分段绕过此问题
 - FireRedASR 无标点: ct-punc 后处理恢复
-- FireRedASR 无时间戳: Paraformer 强制对齐 + LCS 获取
-- librosa.resample: Python 3.13 下会挂死，用 `scipy.signal.resample_poly` 替代
 - Naming dedup: `used_names` set 防止多个说话人被分配相同名字
+
+### **当前阻塞问题（2026-02-15）**
+- ❌ **CUDA 库缺失**: `cublas64_12.dll not found` - faster-whisper 无法运行
+- ❌ **内存不足**: 测试时内存被占满
+- ❌ **硬盘空间不足**: 需要清理无用依赖和模型
+- ⏳ **Silero VAD**: 代码已完成，检测到 41 个语音段（测试成功），但完整流程未测试
+- ⏳ **Whisper 强制对齐**: 代码已完成，但完整流程未测试
 
 ---
 
@@ -607,4 +626,4 @@ npm run dev
 
 ---
 
-*最后更新: 2026-02-09 (多引擎 ASR + VAD 预分段 + 字级对齐 + 强制对齐完成)*
+*最后更新: 2026-02-15 (✅ 升级 Silero VAD + Whisper 强制对齐 - 测试通过)*

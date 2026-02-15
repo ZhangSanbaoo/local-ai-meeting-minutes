@@ -47,8 +47,8 @@ class PathSettings(BaseSettings):
 class ASRSettings(BaseSettings):
     """语音识别配置"""
 
-    # Whisper 模型
-    model_name: Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"] = "small"
+    # Whisper 模型（None = 强制前端选择）
+    model_name: Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"] | None = None
     device: Literal["cpu", "cuda", "auto"] = "auto"
     compute_type: Literal["int8", "float16", "float32"] = "int8"
 

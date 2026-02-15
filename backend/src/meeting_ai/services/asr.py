@@ -29,30 +29,27 @@ logger = get_logger("services.asr")
 
 # ---------------------------------------------------------------------------
 # VAD pre-segmentation (shared across engines)
+# Using Silero VAD (industry standard, whisperX default)
 # ---------------------------------------------------------------------------
 
 _vad_model = None
 
 
 def _get_vad_model():
-    """懒加载 fsmn-vad 模型（单例）"""
+    """懒加载 Silero VAD 模型（单例）- 业界标准"""
     global _vad_model
     if _vad_model is not None:
         return _vad_model
 
-    models_dir = get_settings().paths.models_dir
-    vad_dir = models_dir / "streaming" / "funasr" / "fsmn-vad"
-    if not vad_dir.exists():
-        logger.warning(f"fsmn-vad 模型未找到: {vad_dir}")
+    try:
+        from silero_vad import load_silero_vad
+        logger.info("加载 Silero VAD 模型（业界标准）")
+        _vad_model = load_silero_vad(onnx=False)  # 使用 PyTorch 版本（更快）
+        logger.info("Silero VAD 模型加载完成")
+        return _vad_model
+    except Exception as e:
+        logger.error(f"Silero VAD 加载失败: {e}")
         return None
-
-    from funasr import AutoModel
-    logger.info(f"加载 fsmn-vad 模型: {vad_dir}")
-    _vad_model = AutoModel(
-        model=str(vad_dir),
-        disable_update=True,
-    )
-    return _vad_model
 
 
 def _run_vad(
@@ -62,60 +59,106 @@ def _run_vad(
     min_segment_ms: int = 200,
 ) -> list[tuple[float, float]] | None:
     """
-    用 fsmn-vad 对音频做语音活动检测，返回语音段 [(start_sec, end_sec), ...].
+    用 Silero VAD 对音频做语音活动检测，返回语音段 [(start_sec, end_sec), ...].
 
-    返回 None 表示 VAD 不可用或失败。
+    Args:
+        audio_path: 音频文件路径
+        max_single_segment_time: 单个片段最大时长（毫秒）
+        min_segment_ms: 最小片段时长（毫秒），过短的片段会被过滤
+
+    Returns:
+        语音段列表 [(start_sec, end_sec), ...]，失败返回 None
     """
     vad_model = _get_vad_model()
     if vad_model is None:
         return None
 
     try:
-        res = vad_model.generate(
-            input=str(audio_path),
-            cache={},
-            max_single_segment_time=max_single_segment_time,
+        from silero_vad import get_speech_timestamps
+        import torch
+        import soundfile as sf
+        from scipy.signal import resample_poly
+
+        # 读取音频（Silero VAD 需要 16kHz 采样率）
+        # 不使用 silero_vad.read_audio（依赖 torchcodec），改用 soundfile
+        wav_np, sr = sf.read(str(audio_path), dtype='float32')
+
+        # 转为单声道
+        if wav_np.ndim > 1:
+            wav_np = wav_np.mean(axis=1)
+
+        # 重采样到 16kHz (使用 scipy，避免 librosa.resample 在 Python 3.13 下挂死)
+        if sr != 16000:
+            # 计算重采样比例
+            up = 16000
+            down = sr
+            # 简化比例
+            from math import gcd
+            g = gcd(up, down)
+            up //= g
+            down //= g
+            wav_np = resample_poly(wav_np, up, down)
+
+        # 转为 torch.Tensor
+        wav = torch.from_numpy(wav_np)
+
+        logger.debug(f"Silero VAD 读取音频: {audio_path}, 长度={len(wav)}")
+
+        # 检测语音段
+        speech_timestamps = get_speech_timestamps(
+            wav,
+            vad_model,
+            threshold=0.5,  # 语音概率阈值
+            min_speech_duration_ms=min_segment_ms,  # 最小语音段
+            min_silence_duration_ms=300,  # 最小静音段（用于分割）
+            speech_pad_ms=30,  # 语音段前后填充
         )
-        logger.debug(f"VAD generate() 返回: type={type(res)}, len={len(res) if isinstance(res, list) else 'N/A'}")
 
-        # res 格式: [{"text": [[start_ms, end_ms], [start_ms, end_ms], ...]}]
-        if not res or not isinstance(res, list):
-            logger.warning(f"VAD 返回格式错误: res={type(res)}")
+        if not speech_timestamps:
+            logger.warning("Silero VAD 未检测到语音段")
             return None
 
-        if not res[0]:
-            logger.warning("VAD res[0] 为空")
-            return None
-
-        logger.debug(f"VAD res[0] type={type(res[0])}, keys={res[0].keys() if isinstance(res[0], dict) else 'not dict'}")
-
-        raw_segments = res[0].get("text", []) if isinstance(res[0], dict) else []
-        if not raw_segments:
-            logger.warning(f"VAD 未检测到语音段: raw_segments={raw_segments}")
-            return None
-
+        # 转换为秒 + 合并过长片段
         vad_segs: list[tuple[float, float]] = []
-        for pair in raw_segments:
-            if isinstance(pair, (list, tuple)) and len(pair) == 2:
-                start_ms, end_ms = pair
-                if end_ms - start_ms >= min_segment_ms:
-                    vad_segs.append((start_ms / 1000.0, end_ms / 1000.0))
+        for seg in speech_timestamps:
+            start_sec = seg['start'] / 16000.0  # 样本数 → 秒
+            end_sec = seg['end'] / 16000.0
+            duration_ms = (end_sec - start_sec) * 1000.0
 
-        logger.info(f"VAD 检测到 {len(vad_segs)} 个语音段")
+            # 如果片段过长，分割成多个
+            if duration_ms > max_single_segment_time:
+                num_splits = int(duration_ms // max_single_segment_time) + 1
+                split_duration = (end_sec - start_sec) / num_splits
+                for i in range(num_splits):
+                    split_start = start_sec + i * split_duration
+                    split_end = min(start_sec + (i + 1) * split_duration, end_sec)
+                    vad_segs.append((split_start, split_end))
+            else:
+                vad_segs.append((start_sec, end_sec))
+
+        logger.info(f"Silero VAD 检测到 {len(vad_segs)} 个语音段")
         return vad_segs if vad_segs else None
 
     except Exception as e:
-        logger.warning(f"VAD 检测失败: {e}")
+        logger.warning(f"Silero VAD 检测失败: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return None
 
 
 def unload_vad_model():
-    """释放 VAD 模型"""
+    """释放 Silero VAD 模型"""
     global _vad_model
     if _vad_model is not None:
-        logger.info("释放 fsmn-vad 模型")
+        logger.info("释放 Silero VAD 模型")
         _vad_model = None
         gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -176,9 +219,10 @@ def unload_punc_model():
 
 # ---------------------------------------------------------------------------
 # Forced Alignment (用于没有原生时间戳的 ASR 引擎)
+# Using Whisper (业界标准，总是返回 word timestamps)
 # ---------------------------------------------------------------------------
 
-_fa_model = None  # Forced Alignment 参考模型（Paraformer-Large）
+_fa_model = None  # Forced Alignment 参考模型（Whisper）
 _fa_model_name = None
 
 
@@ -186,40 +230,35 @@ def _get_fa_model():
     """
     懒加载强制对齐参考模型（单例）
 
-    优先使用 Paraformer-Large，回退到 SenseVoice-Small
+    使用 Whisper-medium（可靠、word timestamps 精确）
     """
     global _fa_model, _fa_model_name
     if _fa_model is not None:
         return _fa_model, _fa_model_name
 
-    from funasr import AutoModel
+    from faster_whisper import WhisperModel
     models_dir = get_settings().paths.models_dir
+    settings = get_settings()
 
-    # 优先: Paraformer-Large (字级时间戳最准)
-    paraformer_dir = models_dir / "asr" / "paraformer-large"
-    if paraformer_dir.exists():
-        logger.info(f"[强制对齐] 加载 Paraformer-Large: {paraformer_dir}")
-        _fa_model = AutoModel(
-            model=str(paraformer_dir),
-            disable_update=True,
-            disable_pbar=True,
-        )
-        _fa_model_name = "paraformer-large"
-        return _fa_model, _fa_model_name
+    # 尝试加载 Whisper 模型（优先 medium，回退 small）
+    for model_size in ["medium", "small", "base"]:
+        model_dir = models_dir / "whisper" / f"faster-whisper-{model_size}"
+        if model_dir.exists():
+            logger.info(f"[强制对齐] 加载 Whisper {model_size}: {model_dir}")
+            try:
+                _fa_model = WhisperModel(
+                    str(model_dir),
+                    device=settings.asr.device,
+                    compute_type=settings.asr.compute_type,
+                )
+                _fa_model_name = f"whisper-{model_size}"
+                logger.info(f"[强制对齐] Whisper {model_size} 加载完成")
+                return _fa_model, _fa_model_name
+            except Exception as e:
+                logger.warning(f"[强制对齐] Whisper {model_size} 加载失败: {e}")
+                continue
 
-    # 回退: SenseVoice-Small
-    sensevoice_dir = models_dir / "asr" / "sensevoice-small"
-    if sensevoice_dir.exists():
-        logger.info(f"[强制对齐] 加载 SenseVoice-Small: {sensevoice_dir}")
-        _fa_model = AutoModel(
-            model=str(sensevoice_dir),
-            disable_update=True,
-            disable_pbar=True,
-        )
-        _fa_model_name = "sensevoice-small"
-        return _fa_model, _fa_model_name
-
-    logger.warning("[强制对齐] 无可用参考模型 (需 paraformer-large 或 sensevoice-small)")
+    logger.warning("[强制对齐] 无可用 Whisper 模型")
     return None, None
 
 
@@ -334,7 +373,7 @@ def _forced_align(
     segment_end: float,
 ) -> list[CharTimestamp]:
     """
-    强制对齐：用参考 ASR 模型（Paraformer）转写同一段音频，
+    强制对齐：用 Whisper 转写同一段音频获取 word timestamps，
     然后用 LCS 算法将目标文本对齐到参考时间戳
 
     Args:
@@ -348,66 +387,104 @@ def _forced_align(
     """
     fa_model, model_name = _get_fa_model()
     if fa_model is None:
-        logger.warning("[强制对齐] 无参考模型，跳过")
+        logger.warning("[强制对齐] 无 Whisper 模型，跳过")
         return []
 
     try:
-        # 用参考模型转写同一段音频
-        # 注意：不同参数可能影响是否返回 timestamp
-        res = fa_model.generate(
-            input=str(audio_path),
-            cache={},
-            batch_size_s=300,
+        # 用 Whisper 转写音频，强制开启 word_timestamps
+        segments_iter, info = fa_model.transcribe(
+            str(audio_path),
+            language="zh",
+            word_timestamps=True,  # 强制开启
+            beam_size=5,
+            vad_filter=False,  # 不使用 VAD，我们已经预分段了
         )
 
-        logger.debug(f"[强制对齐] 参考模型返回: type={type(res)}, len={len(res) if isinstance(res, list) else 'N/A'}")
+        # 收集所有 segments 和 words
+        ref_text_parts = []
+        ref_word_timestamps = []  # [(word, start, end), ...]
 
-        if not res or not isinstance(res, list):
-            logger.warning(f"[强制对齐] 参考模型未返回列表: {type(res)}")
+        for seg in segments_iter:
+            ref_text_parts.append(seg.text.strip())
+            if seg.words:
+                for w in seg.words:
+                    ref_word_timestamps.append((
+                        w.word.strip(),
+                        w.start,
+                        w.end,
+                    ))
+
+        if not ref_text_parts or not ref_word_timestamps:
+            logger.warning(f"[强制对齐] Whisper 未返回文本或时间戳")
             return []
 
-        if not res or not isinstance(res[0], dict):
-            logger.warning(f"[强制对齐] 参考模型未返回字典: {type(res[0]) if res else 'empty'}")
-            return []
+        ref_text = "".join(ref_text_parts)
+        logger.debug(f"[强制对齐] Whisper 转写: {ref_text[:50]}... ({len(ref_word_timestamps)} words)")
+        logger.debug(f"[强制对齐] 目标文本: {target_text[:50]}...")
 
-        logger.debug(f"[强制对齐] res[0] keys: {res[0].keys()}")
+        # 将 word timestamps 转换为 char timestamps
+        # 假设每个 word 内部的字符均匀分布
+        ref_char_timestamps = []  # [(start_ms, end_ms), ...]
+        for word, start_sec, end_sec in ref_word_timestamps:
+            word_chars = list(word)
+            word_duration = end_sec - start_sec
+            char_duration = word_duration / len(word_chars) if word_chars else 0
 
-        ref_text = res[0].get("text", "")
-        ref_timestamps = res[0].get("timestamp", [])
+            for i, ch in enumerate(word_chars):
+                ch_start = start_sec + i * char_duration
+                ch_end = start_sec + (i + 1) * char_duration
+                ref_char_timestamps.append((
+                    int(ch_start * 1000),  # 秒 → 毫秒
+                    int(ch_end * 1000),
+                ))
 
-        if not ref_text:
-            logger.warning("[强制对齐] 参考模型未返回文本")
-            return []
-
-        if not ref_timestamps:
-            logger.warning(f"[强制对齐] 参考模型未返回时间戳 (text_len={len(ref_text)})")
-            return []
+        if len(ref_char_timestamps) != len(ref_text):
+            logger.warning(f"[强制对齐] 时间戳数量不匹配: {len(ref_char_timestamps)} vs {len(ref_text)}")
+            # 如果不匹配，尝试调整
+            if len(ref_char_timestamps) > len(ref_text):
+                ref_char_timestamps = ref_char_timestamps[:len(ref_text)]
+            else:
+                # 时间戳太少，放弃
+                return []
 
         # LCS 对齐
-        logger.debug(f"[强制对齐] target={target_text[:20]}..., ref={ref_text[:20]}...")
-        char_ts = _lcs_align_timestamps(target_text, ref_text, ref_timestamps)
+        char_ts = _lcs_align_timestamps(target_text, ref_text, ref_char_timestamps)
 
         # 调整时间偏移（参考模型转写的是整个文件，需要加上 segment_start）
-        for ts in char_ts:
-            ts.start += segment_start
-            ts.end += segment_start
+        # CharTimestamp 是 NamedTuple，不可变，需要创建新对象
+        adjusted_char_ts = [
+            CharTimestamp(
+                char=ts.char,
+                start=ts.start + segment_start,
+                end=ts.end + segment_start,
+            )
+            for ts in char_ts
+        ]
 
-        logger.info(f"[强制对齐] 成功: {len(char_ts)} 个字符")
-        return char_ts
+        logger.info(f"[强制对齐] Whisper 成功: {len(adjusted_char_ts)} 个字符")
+        return adjusted_char_ts
 
     except Exception as e:
-        logger.warning(f"[强制对齐] 失败: {e}")
+        logger.warning(f"[强制对齐] Whisper 失败: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return []
 
 
 def unload_fa_model():
-    """释放强制对齐参考模型"""
+    """释放强制对齐 Whisper 模型"""
     global _fa_model, _fa_model_name
     if _fa_model is not None:
         logger.info(f"释放强制对齐模型: {_fa_model_name}")
         _fa_model = None
         _fa_model_name = None
         gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
 
 # ---------------------------------------------------------------------------
