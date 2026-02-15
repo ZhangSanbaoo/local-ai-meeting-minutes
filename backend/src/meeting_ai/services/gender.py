@@ -5,6 +5,7 @@
 - f0: 基频分析（内置，零依赖）
 - ecapa-gender: ECAPA-TDNN 模型（需下载到 models/gender/ecapa-gender/）
 - wav2vec2-gender: Wav2Vec2 模型（需下载到 models/gender/wav2vec2-gender/）
+- audeering-gender: Wav2Vec2-robust 年龄+性别模型（需下载到 models/gender/audeering-gender/）
 
 使用工厂模式，根据引擎名称动态选择检测器。
 """
@@ -644,6 +645,103 @@ class Wav2Vec2GenderDetector(GenderDetector):
 
 
 # ============================================================================
+# Audeering 引擎（audeering/wav2vec2-large-robust-24-ft-age-gender）
+# ============================================================================
+
+class AudeeringGenderDetector(GenderDetector):
+    """Audeering Wav2Vec2 年龄+性别检测器
+
+    该模型输出 3 个类别：child, female, male
+    专门针对年龄和性别进行 fine-tuned，性能优于通用模型
+    """
+
+    def __init__(self, model_dir: Path):
+        self._model_dir = model_dir
+        self._model = None
+        self._processor = None
+
+    def _load_model(self):
+        if self._model is not None:
+            return
+
+        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+
+        logger.info(f"加载 Audeering-Gender 模型: {self._model_dir}")
+        self._processor = AutoFeatureExtractor.from_pretrained(str(self._model_dir))
+        self._model = AutoModelForAudioClassification.from_pretrained(str(self._model_dir))
+
+        if torch.cuda.is_available():
+            self._model = self._model.to("cuda")
+
+        self._model.eval()
+        logger.info("Audeering-Gender 模型加载完成")
+
+    def detect(
+        self,
+        wav_path: Path,
+        segments: list[Segment],
+        speaker_id: str,
+        max_seconds: float = 20.0,
+    ) -> tuple[Gender, float]:
+        self._load_model()
+
+        sample_rate, combined_audio = _extract_speaker_audio(
+            wav_path, segments, speaker_id, max_seconds
+        )
+        if combined_audio is None:
+            return Gender.UNKNOWN, 0.0
+
+        inputs = self._processor(
+            combined_audio, sampling_rate=sample_rate, return_tensors="pt"
+        )
+
+        if torch.cuda.is_available():
+            inputs = {k: v.to("cuda") for k, v in inputs.items()}
+
+        with torch.no_grad():
+            logits = self._model(**inputs).logits
+
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()[0]
+        labels = self._model.config.id2label
+
+        # audeering 模型输出: {0: 'child', 1: 'female', 2: 'male'}
+        child_prob = 0.0
+        female_prob = 0.0
+        male_prob = 0.0
+
+        for idx, label in labels.items():
+            label_lower = label.lower()
+            if "child" in label_lower:
+                child_prob = float(probs[idx])
+            elif "female" in label_lower:
+                female_prob = float(probs[idx])
+            elif "male" in label_lower and "female" not in label_lower:
+                male_prob = float(probs[idx])
+
+        # 如果 child 概率过高，返回 UNKNOWN
+        # 否则在 male/female 中选择较高者
+        if child_prob > 0.6:
+            gender = Gender.UNKNOWN
+            confidence = child_prob
+        elif male_prob > female_prob and male_prob > 0.45:
+            gender = Gender.MALE
+            confidence = male_prob
+        elif female_prob > male_prob and female_prob > 0.45:
+            gender = Gender.FEMALE
+            confidence = female_prob
+        else:
+            gender = Gender.UNKNOWN
+            confidence = max(child_prob, male_prob, female_prob)
+
+        logger.debug(
+            f"{speaker_id}: Audeering child={child_prob:.3f}, male={male_prob:.3f}, "
+            f"female={female_prob:.3f} -> {gender.value}"
+        )
+
+        return gender, confidence
+
+
+# ============================================================================
 # 工厂函数
 # ============================================================================
 
@@ -687,12 +785,14 @@ def get_gender_detector(engine_name: str | None = None) -> GenderDetector:
             engine_name = "f0"
         elif "ecapa" in engine_name.lower():
             _detector = ECAPAGenderDetector(model_dir)
+        elif "audeering" in engine_name.lower():
+            _detector = AudeeringGenderDetector(model_dir)
         elif "wav2vec2" in engine_name.lower():
             _detector = Wav2Vec2GenderDetector(model_dir)
         else:
             # 通用 transformers 模型（尝试 AutoModel）
             logger.info(f"尝试以通用 transformers 模型加载: {engine_name}")
-            _detector = ECAPAGenderDetector(model_dir)  # 假设兼容
+            _detector = Wav2Vec2GenderDetector(model_dir)  # 假设是 transformers 兼容模型
 
     _detector_engine = engine_name
     return _detector

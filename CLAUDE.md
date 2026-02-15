@@ -59,7 +59,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 4. **字级对齐** - 逐字/词时间戳 + diarization → 精确说话人切分（见下文）
 5. **实时流式转写** - FunASR Paraformer / sherpa-onnx 双引擎，边录边转
 6. **智能命名** - LLM + 正则推断说话人身份（"张教授"、"小柔"），去重保护
-7. **性别检测** - f0 基频 / ECAPA-TDNN / wav2vec2，多引擎可选
+7. **性别检测** - f0 基频 / ECAPA-TDNN / Wav2Vec2 / Audeering (age+gender)，多引擎可选
 8. **错别字校正** - LLM 修复转写错误
 9. **会议总结** - LLM 自动生成会议摘要
 10. **音频增强** - Demucs 人声分离 + DeepFilterNet3 降噪 + Resemble Enhance（可选）
@@ -79,7 +79,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 | **强制对齐** | **Whisper** ← Paraformer | **✅ 已测试**：字级时间戳生成成功，word timestamps + LCS（B层）|
 | 标点恢复 | ct-punc | FunASR 生态标准（B层）✅ |
 | LLM | llama-cpp-python + Qwen2.5-7B | 用户可配置（A层）|
-| 性别检测 | f0 / ECAPA-TDNN / wav2vec2 | 3 引擎可选（A层）|
+| 性别检测 | f0 / ECAPA-TDNN / Wav2Vec2 / Audeering | 4 引擎可选（A层）|
 | 音频增强 | Demucs + DeepFilterNet3 + Resemble | 业界顶级（B层）✅ |
 | 音频处理 | ffmpeg | 格式转换 |
 | 配置 | pydantic-settings | 支持 .env 文件 |
@@ -96,7 +96,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 - **ASR 引擎** - Whisper / FunASR / FireRedASR（用户按任务选择）
 - **LLM** - Qwen / 其他 GGUF 模型（用户可配置）
 - **说话人分离** - pyannote-3.1 / DiariZen-large（用户选择）
-- **性别检测** - f0 / ECAPA-TDNN / wav2vec2（用户选择）
+- **性别检测** - f0 / ECAPA-TDNN / Wav2Vec2 / Audeering（用户选择）
 
 #### **B层：内部实现模块**（使用业界标准，对用户透明）
 - **VAD** - **Silero VAD**（whisperX 标准）→ 替换 fsmn-vad，更可靠
@@ -168,7 +168,7 @@ meeting-ai/
 │   │   │   ├── diarization.py       # 说话人辨识 (pyannote / DiariZen)
 │   │   │   ├── asr.py               # 多引擎 ASR + VAD 预分段 + 强制对齐
 │   │   │   ├── alignment.py         # 说话人-文本对齐 (字级/中点/句级)
-│   │   │   ├── gender.py            # 性别检测 (f0 / ECAPA-TDNN / wav2vec2)
+│   │   │   ├── gender.py            # 性别检测 (f0 / ECAPA-TDNN / Wav2Vec2 / Audeering)
 │   │   │   ├── naming.py            # 智能命名 (LLM + 正则)
 │   │   │   ├── correction.py        # 错别字校正 (LLM)
 │   │   │   ├── summary.py           # 会议总结 (LLM)

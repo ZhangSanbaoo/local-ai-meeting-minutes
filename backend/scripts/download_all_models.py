@@ -139,6 +139,16 @@ GENDER_MODELS = [
         size_hint="~1.2 GB",
         note="Wav2Vec2 大模型微调，噪声环境鲁棒",
     ),
+    ModelDef(
+        name="audeering-gender",
+        category="gender",
+        target_dir=MODELS_DIR / "gender" / "audeering-gender",
+        source="huggingface",
+        repo_id="audeering/wav2vec2-large-robust-24-ft-age-gender",
+        description="Wav2Vec2-Robust 年龄+性别分类 · 准确率 ~98%",
+        size_hint="~1.2 GB",
+        note="专业 fine-tuned 模型，输出 child/female/male 三类",
+    ),
 ]
 
 ALL_MODELS = ASR_MODELS + DIAR_MODELS + GENDER_MODELS
@@ -397,10 +407,10 @@ def list_models():
 def interactive_select() -> list[ModelDef]:
     """交互式选择要下载的模型"""
     print("\n请选择要下载的模型类别:")
-    print("  1. 全部下载 (~7 GB)")
+    print("  1. 全部下载 (~9 GB)")
     print("  2. ASR 语音识别 (~6 GB)")
     print("  3. 说话人分离 (~100 MB)")
-    print("  4. 性别检测 (~1.5 GB)")
+    print("  4. 性别检测 (~2.7 GB)")
     print("  5. 退出")
     print()
 

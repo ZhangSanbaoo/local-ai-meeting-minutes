@@ -23,6 +23,7 @@ GENDER_MODEL_META: dict[str, dict[str, str]] = {
     "f0": {"metric": "≈90%", "vram": "CPU", "label": "基频分析 (内置)"},
     "ecapa-gender": {"metric": "≈97%", "vram": "≈0.3G", "label": "ECAPA-TDNN"},
     "wav2vec2-gender": {"metric": "≈95%", "vram": "≈1.5G", "label": "Wav2Vec2"},
+    "audeering-gender": {"metric": "≈98%", "vram": "≈1.5G", "label": "Wav2Vec2-Robust (Age+Gender)"},
 }
 
 # 已知 ASR 模型的元数据（CER 取自 AISHELL-1 基准，VRAM 为 float16 推理估算）
