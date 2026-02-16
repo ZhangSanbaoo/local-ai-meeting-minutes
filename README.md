@@ -8,7 +8,7 @@
 - **音频文件处理** - 上传音频文件进行完整处理
 - **说话人分离** - pyannote-audio 3.1 识别不同说话人
 - **智能命名** - 本地 LLM 推断说话人身份（"张教授"、"小柔"）
-- **性别检测** - 基于基频分析判断说话人性别
+- **性别检测** - 4 引擎可选（f0 基频 / ECAPA-TDNN / Wav2Vec2 / Audeering），最高 98% 准确率
 - **错别字校正** - LLM 修复常见转写错误
 - **会议总结** - 自动生成会议摘要和要点
 - **历史记录** - 浏览、编辑、导出历史处理结果
@@ -45,6 +45,7 @@ meeting-ai/
 │   │   │   ├── streaming_asr.py   # 流式 ASR (FunASR + sherpa-onnx + fsmn-vad)
 │   │   │   ├── diarization.py     # 说话人分离
 │   │   │   ├── asr.py             # 离线转写 (faster-whisper)
+│   │   │   ├── gender.py          # 性别检测 (f0 / ECAPA / Wav2Vec2 / Audeering)
 │   │   │   ├── naming.py          # 智能命名
 │   │   │   └── summary.py         # 会议总结
 │   │   ├── utils/             # 工具函数
@@ -66,6 +67,7 @@ meeting-ai/
 ├── models/                     # 本地 AI 模型
 │   ├── pyannote/              # 说话人分离模型
 │   ├── whisper/               # Whisper ASR 模型
+│   ├── gender/                # 性别检测模型 (ecapa-gender / wav2vec2-gender / audeering-gender)
 │   ├── llm/                   # Qwen2.5-7B (GGUF)
 │   └── streaming/             # 流式 ASR 模型
 │       ├── funasr/            # paraformer-zh-streaming + ct-punc + fsmn-vad
@@ -194,15 +196,18 @@ MEETING_AI_LLM__N_CTX=6144
 
 所有模型存放在 `models/` 目录下:
 
-| 模型 | 用途 | 大小 |
-|------|------|------|
-| pyannote speaker-diarization-3.1 | 说话人分离 | ~50MB |
-| faster-whisper-medium | 离线语音转写 | ~1.5GB |
-| Qwen2.5-7B-Instruct Q4_K_M | 命名/校正/总结 | ~4.4GB |
-| FunASR paraformer-zh-streaming | 中文流式 ASR | ~220MB |
-| FunASR ct-punc | 标点恢复 | ~300MB |
-| FunASR fsmn-vad | 语音活动检测 | ~1.6MB |
-| sherpa-onnx paraformer-trilingual | 三语流式 ASR | ~220MB |
+| 模型 | 用途 | 大小 | 准确率/性能 |
+|------|------|------|------------|
+| pyannote speaker-diarization-3.1 | 说话人分离 | ~50MB | DER ~11% |
+| faster-whisper-medium | 离线语音转写 | ~1.5GB | CER 5.1% |
+| ecapa-gender | 性别检测 | ~60MB | ~97% |
+| wav2vec2-gender | 性别检测 | ~1.2GB | ~95% |
+| audeering-gender | 性别检测（年龄+性别） | ~1.2GB | ~98% ⭐ |
+| Qwen2.5-7B-Instruct Q4_K_M | 命名/校正/总结 | ~4.4GB | 7B 参数 |
+| FunASR paraformer-zh-streaming | 中文流式 ASR | ~220MB | 实时 |
+| FunASR ct-punc | 标点恢复 | ~300MB | - |
+| FunASR fsmn-vad | 语音活动检测 | ~1.6MB | - |
+| sherpa-onnx paraformer-trilingual | 三语流式 ASR | ~220MB | zh/粤/en |
 
 ## 技术栈
 
@@ -219,6 +224,8 @@ MEETING_AI_LLM__N_CTX=6144
 - [x] 前后端分离 (FastAPI + React)
 - [x] 实时流式 ASR (FunASR + sherpa-onnx 双引擎)
 - [x] fsmn-vad 流式语音活动检测
+- [x] 多引擎性别检测 (4 引擎，最高 98% 准确率)
+- [x] Windows 文件锁处理 (删除重试机制)
 - [ ] 集成测试
 - [ ] 系统音频采集
 - [ ] Tauri 桌面应用打包

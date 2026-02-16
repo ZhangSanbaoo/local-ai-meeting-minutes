@@ -607,6 +607,10 @@ python backend/scripts/download_all_models.py
 - FireRedASR 无标点: ct-punc 后处理恢复
 - Naming dedup: `used_names` set 防止多个说话人被分配相同名字
 
+### **Windows 文件锁相关**
+- **历史记录删除失败**: 浏览器播放音频时文件被占用 → 添加重试机制（3次，0.5s间隔）+ 友好错误提示（409 Conflict）
+- **解决方案**: `shutil.rmtree()` 捕获 `PermissionError` → 自动重试 → 失败后提示"请先停止音频播放"
+
 ### **当前阻塞问题（2026-02-15）**
 - ❌ **CUDA 库缺失**: `cublas64_12.dll not found` - faster-whisper 无法运行
 - ❌ **内存不足**: 测试时内存被占满
@@ -626,4 +630,4 @@ python backend/scripts/download_all_models.py
 
 ---
 
-*最后更新: 2026-02-15 (✅ 升级 Silero VAD + Whisper 强制对齐 - 测试通过)*
+*最后更新: 2026-02-16 (✅ 添加 audeering-gender 第4引擎 + 修复 Windows 文件锁删除问题)*
