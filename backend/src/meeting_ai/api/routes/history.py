@@ -163,18 +163,38 @@ async def get_history_item(history_id: str):
 @router.delete("/history/{history_id}")
 async def delete_history_item(history_id: str):
     """删除历史记录"""
+    import shutil
+    import time
+
     settings = get_settings()
     output_dir = settings.paths.output_dir / history_id
 
     if not output_dir.exists():
         raise HTTPException(status_code=404, detail="历史记录不存在")
 
-    try:
-        import shutil
-        shutil.rmtree(output_dir)
-        return {"status": "ok", "message": f"已删除: {history_id}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+    # Windows 下如果文件被占用（如音频正在播放），需要重试
+    max_retries = 3
+    retry_delay = 0.5  # 秒
+
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(output_dir)
+            return {"status": "ok", "message": f"已删除: {history_id}"}
+        except PermissionError as e:
+            # Windows 文件被占用（音频播放中等）
+            last_error = e
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            else:
+                raise HTTPException(
+                    status_code=409,  # Conflict
+                    detail=f"删除失败：文件正在使用中。请先停止音频播放，然后重试。"
+                )
+        except Exception as e:
+            # 其他错误立即抛出
+            raise HTTPException(status_code=500, detail=f"删除失败: {e}")
 
 
 @router.put("/history/{history_id}/rename")
