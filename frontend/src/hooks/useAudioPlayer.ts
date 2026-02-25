@@ -33,11 +33,22 @@ export function useAudioPlayer({ src, onTimeUpdate, onPlayStateChange }: UseAudi
       return
     }
 
+    // 重置状态，等待新音频加载
+    setIsPlaying(false)
+    setIsLoaded(false)
+    setCurrentTime(0)
+
     const audio = new Audio(src)
     audioRef.current = audio
 
     const handleLoadedMetadata = () => {
       setDuration(audio.duration)
+      setIsLoaded(true)
+    }
+
+    // canplay 作为 loadedmetadata 的后备，确保缓存音频(304)也能正确初始化
+    const handleCanPlay = () => {
+      if (audio.duration) setDuration(audio.duration)
       setIsLoaded(true)
     }
 
@@ -67,6 +78,7 @@ export function useAudioPlayer({ src, onTimeUpdate, onPlayStateChange }: UseAudi
     }
 
     audio.addEventListener('loadedmetadata', handleLoadedMetadata)
+    audio.addEventListener('canplay', handleCanPlay)
     audio.addEventListener('timeupdate', handleTimeUpdate)
     audio.addEventListener('ended', handleEnded)
     audio.addEventListener('play', handlePlay)
@@ -76,6 +88,7 @@ export function useAudioPlayer({ src, onTimeUpdate, onPlayStateChange }: UseAudi
     return () => {
       audio.pause()
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      audio.removeEventListener('canplay', handleCanPlay)
       audio.removeEventListener('timeupdate', handleTimeUpdate)
       audio.removeEventListener('ended', handleEnded)
       audio.removeEventListener('play', handlePlay)

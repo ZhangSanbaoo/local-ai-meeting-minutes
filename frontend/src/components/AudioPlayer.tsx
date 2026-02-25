@@ -10,9 +10,10 @@ interface AudioPlayerProps {
   onPlayStateChange?: (isPlaying: boolean) => void
   seekTo?: number | null  // 外部控制跳转的时间点
   seekId?: number         // 跳转请求的唯一 ID，变化时触发跳转
+  seekAutoPlay?: boolean  // 跳转后是否自动播放（默认 true）
 }
 
-export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seekTo, seekId }: AudioPlayerProps) {
+export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seekTo, seekId, seekAutoPlay = true }: AudioPlayerProps) {
   const {
     isPlaying,
     currentTime,
@@ -24,28 +25,37 @@ export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seek
   } = useAudioPlayer({ src, onTimeUpdate, onPlayStateChange })
 
   const lastSeekIdRef = useRef<number | undefined>(undefined)
-  const pendingSeekRef = useRef<number | null>(null)
+  const pendingSeekRef = useRef<{ time: number; autoPlay: boolean } | null>(null)
 
   // 响应外部跳转请求
   useEffect(() => {
     if (seekId !== undefined && seekId !== lastSeekIdRef.current && seekTo !== null && seekTo !== undefined) {
       lastSeekIdRef.current = seekId
       if (isLoaded) {
-        seekAndPlay(seekTo)
+        if (seekAutoPlay) {
+          seekAndPlay(seekTo)
+        } else {
+          seek(seekTo)
+        }
       } else {
         // 音频未加载，暂存跳转请求
-        pendingSeekRef.current = seekTo
+        pendingSeekRef.current = { time: seekTo, autoPlay: seekAutoPlay }
       }
     }
-  }, [seekId, seekTo, isLoaded, seekAndPlay])
+  }, [seekId, seekTo, seekAutoPlay, isLoaded, seek, seekAndPlay])
 
   // 音频加载完成后执行暂存的跳转
   useEffect(() => {
     if (isLoaded && pendingSeekRef.current !== null) {
-      seekAndPlay(pendingSeekRef.current)
+      const { time, autoPlay } = pendingSeekRef.current
+      if (autoPlay) {
+        seekAndPlay(time)
+      } else {
+        seek(time)
+      }
       pendingSeekRef.current = null
     }
-  }, [isLoaded, seekAndPlay])
+  }, [isLoaded, seek, seekAndPlay])
 
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

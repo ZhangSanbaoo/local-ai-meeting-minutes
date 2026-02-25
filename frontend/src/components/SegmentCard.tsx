@@ -1,4 +1,4 @@
-import { Play, Edit2, Scissors } from 'lucide-react'
+import { Play, Edit2, Scissors, Trash2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { formatTime } from '../utils/format'
 import type { Segment, Speaker } from '../types'
@@ -12,6 +12,7 @@ interface SegmentCardProps {
   onEdit?: () => void
   onSpeakerClick?: () => void
   onSplit?: () => void
+  onDelete?: () => void
 }
 
 export function SegmentCard({
@@ -23,6 +24,7 @@ export function SegmentCard({
   onEdit,
   onSpeakerClick,
   onSplit,
+  onDelete,
 }: SegmentCardProps) {
   const displayName = speaker?.display_name || segment.speaker_name || segment.speaker
 
@@ -75,7 +77,7 @@ export function SegmentCard({
       </p>
 
       {/* 操作按钮 */}
-      {(onSplit || onEdit) && (
+      {(onSplit || onEdit || onDelete) && (
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           {onSplit && (
             <button
@@ -99,6 +101,18 @@ export function SegmentCard({
               title="编辑"
             >
               <Edit2 className="w-4 h-4" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDelete()
+              }}
+              className="p-1 text-gray-400 hover:text-red-500"
+              title="删除片段"
+            >
+              <Trash2 className="w-4 h-4" />
             </button>
           )}
         </div>

@@ -178,10 +178,17 @@ export async function getJobResult(jobId: string): Promise<ProcessResult> {
   return data
 }
 
+export async function deleteSegment(
+  jobId: string,
+  segmentId: number,
+): Promise<void> {
+  await client.delete(`/jobs/${jobId}/segments/${segmentId}`)
+}
+
 export async function updateSegment(
   jobId: string,
   segmentId: number,
-  updates: { text?: string; speaker_name?: string }
+  updates: { text?: string; speaker_name?: string; speaker?: string }
 ): Promise<void> {
   await client.put(`/jobs/${jobId}/segments/${segmentId}`, updates)
 }
@@ -248,10 +255,17 @@ export async function deleteHistoryItem(historyId: string): Promise<void> {
   await client.delete(`/history/${historyId}`)
 }
 
+export async function deleteHistorySegment(
+  historyId: string,
+  segmentId: number,
+): Promise<void> {
+  await client.delete(`/history/${historyId}/segments/${segmentId}`)
+}
+
 export async function updateHistorySegment(
   historyId: string,
   segmentId: number,
-  updates: { text?: string; speaker_name?: string }
+  updates: { text?: string; speaker_name?: string; speaker?: string }
 ): Promise<void> {
   await client.put(`/history/${historyId}/segments/${segmentId}`, updates)
 }

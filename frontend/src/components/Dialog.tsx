@@ -73,30 +73,58 @@ export function Dialog({ open, onClose, title, children, actions }: DialogProps)
 interface EditSegmentDialogProps {
   open: boolean
   onClose: () => void
-  segment: { speaker: string; text: string } | null
-  onSave: (speaker: string, text: string) => void
+  segment: { speakerId: string; text: string } | null
+  speakers: Array<{ id: string; name: string }>
+  onSave: (speakerId: string, text: string, newSpeakerName?: string) => void
 }
 
 export function EditSegmentDialog({
   open,
   onClose,
   segment,
+  speakers,
   onSave,
 }: EditSegmentDialogProps) {
-  const speakerRef = useRef<HTMLInputElement>(null)
+  const [selectedSpeaker, setSelectedSpeaker] = useState('')
+  const [isNewSpeaker, setIsNewSpeaker] = useState(false)
+  const [newSpeakerName, setNewSpeakerName] = useState('')
   const textRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (open && segment) {
-      if (speakerRef.current) speakerRef.current.value = segment.speaker
+      setSelectedSpeaker(segment.speakerId)
+      setIsNewSpeaker(false)
+      setNewSpeakerName('')
       if (textRef.current) textRef.current.value = segment.text
     }
   }, [open, segment])
 
+  // 生成新的说话人 ID
+  const generateNewSpeakerId = () => {
+    const existingNums = speakers
+      .map((s) => {
+        const match = s.id.match(/^SPEAKER_(\d+)$/)
+        return match ? parseInt(match[1], 10) : -1
+      })
+      .filter((n) => n >= 0)
+    const nextNum = existingNums.length > 0 ? Math.max(...existingNums) + 1 : 0
+    return `SPEAKER_${String(nextNum).padStart(2, '0')}`
+  }
+
+  const handleSpeakerChange = (value: string) => {
+    if (value === '__new__') {
+      setIsNewSpeaker(true)
+      setSelectedSpeaker(generateNewSpeakerId())
+    } else {
+      setIsNewSpeaker(false)
+      setSelectedSpeaker(value)
+    }
+  }
+
   const handleSave = () => {
-    const speaker = speakerRef.current?.value || ''
+    if (isNewSpeaker && !newSpeakerName.trim()) return
     const text = textRef.current?.value || ''
-    onSave(speaker, text)
+    onSave(selectedSpeaker, text, isNewSpeaker ? newSpeakerName.trim() : undefined)
     onClose()
   }
 
@@ -115,7 +143,8 @@ export function EditSegmentDialog({
           </button>
           <button
             onClick={handleSave}
-            className="px-4 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700"
+            disabled={isNewSpeaker && !newSpeakerName.trim()}
+            className="px-4 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             保存
           </button>
@@ -127,11 +156,38 @@ export function EditSegmentDialog({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             说话人
           </label>
-          <input
-            ref={speakerRef}
-            type="text"
+          <select
+            value={isNewSpeaker ? '__new__' : selectedSpeaker}
+            onChange={(e) => handleSpeakerChange(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
-          />
+          >
+            {speakers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} ({s.id})
+              </option>
+            ))}
+            <option value="__new__">+ 新建说话人</option>
+          </select>
+          {isNewSpeaker && (
+            <input
+              type="text"
+              value={newSpeakerName}
+              onChange={(e) => setNewSpeakerName(e.target.value)}
+              placeholder="输入新说话人的名字"
+              className="w-full mt-2 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+              autoFocus
+            />
+          )}
+          {!isNewSpeaker && selectedSpeaker !== segment?.speakerId && (
+            <p className="text-xs text-orange-600 mt-1">
+              将把此片段重新分配给 {speakers.find(s => s.id === selectedSpeaker)?.name || selectedSpeaker}
+            </p>
+          )}
+          {isNewSpeaker && newSpeakerName.trim() && (
+            <p className="text-xs text-green-600 mt-1">
+              将创建新说话人 "{newSpeakerName.trim()}" ({selectedSpeaker})
+            </p>
+          )}
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

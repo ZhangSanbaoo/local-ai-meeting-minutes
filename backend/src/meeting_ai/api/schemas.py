@@ -56,6 +56,7 @@ class SegmentUpdateRequest(BaseModel):
     """更新片段请求"""
     text: Optional[str] = Field(default=None, description="新的文本内容")
     speaker_name: Optional[str] = Field(default=None, description="新的说话人名称")
+    speaker: Optional[str] = Field(default=None, description="更改说话人ID（重新分配片段归属）")
 
 
 class SpeakerRenameRequest(BaseModel):

@@ -442,10 +442,10 @@ class NamingService:
                 llm_role = llm_result.get("role")
                 llm_confidence = llm_result.get("confidence", 0)
                 llm_kind = llm_result.get("kind", "")
-                
+
                 if llm_kind == "role" and llm_role:
-                    if llm_role in ["主持人", "主持", "组长"]:
-                        display_name = llm_role if llm_role != "主持" else "主持人"
+                    if llm_role in ["主持人", "主持"]:
+                        display_name = "主持人"
                     else:
                         display_name = get_role_with_number(llm_role)
                     kind = NameKind.ROLE
@@ -534,28 +534,23 @@ class NamingService:
 - 只有对话中【字面出现】的名字才能使用，如"张教授"、"李老师"、"我叫王明"
 - 如果对话中没有提到任何人名，所有 name 都必须是 null
 
-**第二步：如果无法确定名字，根据对话内容推断【具体角色】**
-- 不要使用泛泛的"嘉宾"，要根据会议内容推断具体角色
-- 例如：
-  - 如果是技术讨论会 → "开发者"、"产品经理"、"设计师"
-  - 如果是课堂讨论 → "老师"、"学生"、"助教"
-  - 如果是商业会议 → "项目负责人"、"市场专员"、"财务"
-  - 如果是小组会议 → "组长"、"组员"、"汇报人"
-  - 如果是采访 → "采访者"、"受访者"
-  - 如果实在无法判断 → "参与者"
+**第二步：如果无法确定名字，根据对话中的【实际行为和言语】推断角色**
+- 角色必须有对话内容直接支撑，不能凭空猜测
+- evidence 必须引用对话中的原文片段作为依据
+- 如果对话内容不足以判断具体角色，role 设为 null，不要强行推断
 
 **输出格式（JSON）：**
 {{
-  "SPEAKER_00": {{"name": null, "kind": "role", "confidence": 0.5, "evidence": ["主持会议流程"], "role": "组长"}},
-  "SPEAKER_01": {{"name": null, "kind": "role", "confidence": 0.5, "evidence": ["做项目汇报"], "role": "汇报人"}},
-  "SPEAKER_02": {{"name": "张老师", "kind": "name", "confidence": 0.9, "evidence": ["对话中提到'张老师您好'"], "role": null}}
+  "SPEAKER_00": {{"name": "张老师", "kind": "name", "confidence": 0.9, "evidence": ["SPEAKER_01说了'张老师您好'"], "role": null}},
+  "SPEAKER_01": {{"name": null, "kind": "role", "confidence": 0.6, "evidence": ["说了'我来汇报一下进度'"], "role": "汇报人"}}
 }}
 
 **重要规则：**
-1. 【严禁编造名字】如小明、小红、张三、李四，除非对话中真的出现
-2. 如果 name 是 null，必须提供有意义的 role（不要写"嘉宾"、"参与者A"这种无意义的）
-3. kind 只能是 "name"（有真实名字）或 "role"（只有角色）
-4. confidence 只有在有明确证据时才能大于 0.7
+1. 【严禁编造名字】除非对话中真的出现该名字
+2. 【严禁凭空推断角色】role 必须有对话原文支撑，evidence 必须引用实际对话内容
+3. 如果无法从对话中判断身份，name 和 role 都设为 null
+4. kind 只能是 "name"（有真实名字）或 "role"（有对话支撑的角色）
+5. confidence 只有在有明确证据时才能大于 0.7
 
 只输出 JSON："""
 

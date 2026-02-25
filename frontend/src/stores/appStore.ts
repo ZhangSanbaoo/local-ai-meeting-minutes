@@ -82,8 +82,11 @@ interface AppState {
   setProgress: (progress: number, message: string) => void
   setResult: (result: ProcessResult | null) => void
   toggleAudioSource: () => void
+  deleteSegment: (segmentId: number) => void
   updateSegmentText: (segmentId: number, text: string) => void
   updateSpeakerName: (speakerId: string, name: string) => void
+  updateSegmentSpeaker: (segmentId: number, newSpeakerId: string) => void
+  addSpeaker: (speakerId: string, displayName: string) => void
   updateSummary: (summary: string) => void
   setPlayback: (state: Partial<{
     isPlaying: boolean
@@ -202,10 +205,19 @@ export const useAppStore = create<AppState>((set) => ({
       audioOriginalUrl: result?.audio_original_url ?? null,
       useOriginalAudio: false,
       duration: result?.duration ?? 0,
+      currentTime: 0,
+      currentSegmentId: -1,
     }),
 
   toggleAudioSource: () =>
     set((state) => ({ useOriginalAudio: !state.useOriginalAudio })),
+
+  deleteSegment: (segmentId) =>
+    set((state) => ({
+      segments: state.segments
+        .filter((seg) => seg.id !== segmentId)
+        .map((seg, i) => ({ ...seg, id: i })),
+    })),
 
   updateSegmentText: (segmentId, text) =>
     set((state) => ({
@@ -226,6 +238,33 @@ export const useAppStore = create<AppState>((set) => ({
       segments: state.segments.map((seg) =>
         seg.speaker === speakerId ? { ...seg, speaker_name: name } : seg
       ),
+    })),
+
+  updateSegmentSpeaker: (segmentId, newSpeakerId) =>
+    set((state) => ({
+      segments: state.segments.map((seg) =>
+        seg.id === segmentId
+          ? {
+              ...seg,
+              speaker: newSpeakerId,
+              speaker_name: state.speakers[newSpeakerId]?.display_name || newSpeakerId,
+            }
+          : seg
+      ),
+    })),
+
+  addSpeaker: (speakerId, displayName) =>
+    set((state) => ({
+      speakers: {
+        ...state.speakers,
+        [speakerId]: {
+          id: speakerId,
+          display_name: displayName,
+          gender: null,
+          total_duration: 0,
+          segment_count: 0,
+        },
+      },
     })),
 
   updateSummary: (summary) =>

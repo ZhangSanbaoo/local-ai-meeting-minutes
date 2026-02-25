@@ -53,6 +53,7 @@ export function FilePage() {
     useOriginalAudio,
     toggleAudioSource,
     setResult,
+    deleteSegment,
     updateSegmentText,
     updateSpeakerName,
     updateSummary,
@@ -74,13 +75,13 @@ export function FilePage() {
   const [selectedHistoryId, setSelectedHistoryId] = useState<string>('')
   const [meetingName, setMeetingName] = useState('')
   // 使用对象来包含时间和触发 ID，确保每次点击都触发跳转
-  const [seekRequest, setSeekRequest] = useState<{ time: number; id: number } | null>(null)
+  const [seekRequest, setSeekRequest] = useState<{ time: number; id: number; autoPlay?: boolean } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 对话框状态
   const [editSegment, setEditSegment] = useState<{
     id: number
-    speaker: string
+    speakerId: string
     text: string
   } | null>(null)
   const [renameSpeaker, setRenameSpeaker] = useState<{
@@ -316,27 +317,57 @@ export function FilePage() {
   }, [segments, currentSegmentId, setPlayback])
 
   // 保存编辑
-  const handleSaveSegment = useCallback(async (speaker: string, text: string) => {
+  const handleSaveSegment = useCallback(async (speakerId: string, text: string, newSpeakerName?: string) => {
     if (!editSegment || !currentJobId) return
-    updateSegmentText(editSegment.id, text)
-    updateSpeakerName(segments[editSegment.id]?.speaker || '', speaker)
+
+    const oldSpeakerId = editSegment.speakerId
+    const speakerChanged = speakerId !== oldSpeakerId
+    const textChanged = text !== editSegment.text
+
+    // 如果是新建说话人，先在本地添加
+    if (newSpeakerName) {
+      useAppStore.getState().addSpeaker(speakerId, newSpeakerName)
+    }
+
+    // 更新本地状态
+    if (textChanged) updateSegmentText(editSegment.id, text)
+    if (speakerChanged) useAppStore.getState().updateSegmentSpeaker(editSegment.id, speakerId)
+
+    // 调用后端 API
     try {
-      if (sourceType === 'history' && selectedHistoryId) {
-        await api.updateHistorySegment(selectedHistoryId, editSegment.id, {
-          text,
-          speaker_name: speaker,
-        })
-      } else {
-        await api.updateSegment(currentJobId, editSegment.id, {
-          text,
-          speaker_name: speaker,
-        })
+      const updates: { text?: string; speaker?: string; speaker_name?: string } = {}
+      if (textChanged) updates.text = text
+      if (speakerChanged) updates.speaker = speakerId
+      if (newSpeakerName) updates.speaker_name = newSpeakerName
+
+      if (Object.keys(updates).length > 0) {
+        if (sourceType === 'history' && selectedHistoryId) {
+          await api.updateHistorySegment(selectedHistoryId, editSegment.id, updates)
+        } else {
+          await api.updateSegment(currentJobId, editSegment.id, updates)
+        }
       }
     } catch (err) {
       console.error('保存失败:', err)
     }
     setEditSegment(null)
-  }, [editSegment, currentJobId, sourceType, selectedHistoryId, segments, updateSegmentText, updateSpeakerName])
+  }, [editSegment, currentJobId, sourceType, selectedHistoryId, updateSegmentText])
+
+  // 删除片段
+  const handleDeleteSegment = useCallback(async (segmentId: number) => {
+    if (!currentJobId) return
+    if (!confirm('确定要删除这条对话记录吗？')) return
+    try {
+      if (sourceType === 'history' && selectedHistoryId) {
+        await api.deleteHistorySegment(selectedHistoryId, segmentId)
+      } else {
+        await api.deleteSegment(currentJobId, segmentId)
+      }
+      deleteSegment(segmentId)
+    } catch (err) {
+      console.error('删除失败:', err)
+    }
+  }, [currentJobId, sourceType, selectedHistoryId, deleteSegment])
 
   // 保存重命名
   const handleSaveRename = useCallback(async (newName: string) => {
@@ -603,7 +634,7 @@ export function FilePage() {
                         onEdit={isMergeMode ? undefined : () =>
                           setEditSegment({
                             id: segment.id,
-                            speaker: speakers[segment.speaker]?.display_name || segment.speaker,
+                            speakerId: segment.speaker,
                             text: segment.text,
                           })
                         }
@@ -621,6 +652,7 @@ export function FilePage() {
                             speaker: segment.speaker,
                           })
                         }
+                        onDelete={isMergeMode ? undefined : () => handleDeleteSegment(segment.id)}
                       />
                     </div>
                   </div>
@@ -640,7 +672,13 @@ export function FilePage() {
                 <span className="text-xs text-gray-500 mr-0.5">播放:</span>
                 <div className="inline-flex rounded border border-gray-300 overflow-hidden">
                   <button
-                    onClick={() => { if (useOriginalAudio) toggleAudioSource() }}
+                    onClick={() => {
+                      if (useOriginalAudio) {
+                        const t = useAppStore.getState().currentTime
+                        toggleAudioSource()
+                        setSeekRequest({ time: t, id: Date.now(), autoPlay: false })
+                      }
+                    }}
                     className={`text-xs px-2.5 py-1 transition-colors ${
                       !useOriginalAudio
                         ? 'bg-blue-500 text-white font-medium'
@@ -650,7 +688,13 @@ export function FilePage() {
                     增强音频
                   </button>
                   <button
-                    onClick={() => { if (!useOriginalAudio) toggleAudioSource() }}
+                    onClick={() => {
+                      if (!useOriginalAudio) {
+                        const t = useAppStore.getState().currentTime
+                        toggleAudioSource()
+                        setSeekRequest({ time: t, id: Date.now(), autoPlay: false })
+                      }
+                    }}
                     className={`text-xs px-2.5 py-1 border-l border-gray-300 transition-colors ${
                       useOriginalAudio
                         ? 'bg-blue-500 text-white font-medium'
@@ -668,6 +712,7 @@ export function FilePage() {
               onPlayStateChange={(playing) => setPlayback({ isPlaying: playing })}
               seekTo={seekRequest?.time ?? null}
               seekId={seekRequest?.id}
+              seekAutoPlay={seekRequest?.autoPlay ?? true}
             />
           </div>
         </div>
@@ -976,6 +1021,10 @@ export function FilePage() {
         open={!!editSegment}
         onClose={() => setEditSegment(null)}
         segment={editSegment}
+        speakers={Object.entries(speakers).map(([id, s]) => ({
+          id,
+          name: s.display_name || id,
+        }))}
         onSave={handleSaveSegment}
       />
       <RenameSpeakerDialog

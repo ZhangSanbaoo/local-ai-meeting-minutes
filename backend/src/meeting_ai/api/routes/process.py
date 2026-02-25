@@ -237,6 +237,12 @@ def _sync_process_audio(job_id: str) -> dict:
         t0 = time.time()
         wav_path_original = output_dir / "audio_16k.wav"
         ensure_wav_16k_mono(upload_path, wav_path_original)
+        # 转换成功后删除原始上传文件，避免重复占用空间
+        if wav_path_original.exists() and upload_path.exists() and upload_path != wav_path_original:
+            try:
+                upload_path.unlink()
+            except OSError:
+                pass
         step_times["1_audio_convert"] = time.time() - t0
 
         # ── 2. 音频增强 ──
@@ -332,28 +338,28 @@ def _sync_process_audio(job_id: str) -> dict:
                 logger.warning(f"错别字校正失败: {e}")
             step_times["6_correction"] = time.time() - t0
 
-        # ── 7. 智能命名 ──
+        # ── 7. 性别检测 + 命名 ──
         speakers = {}
         gender_map = {}
+
+        # 7a. 性别检测（始终运行，作为命名兜底）
+        update_progress(0.75, "性别检测...")
+        t0 = time.time()
+        try:
+            gender_engine = options.get("gender_model") or "f0"
+            gender_map = detect_all_genders(wav_path_original, final_segments, engine_name=gender_engine)
+        except Exception as e:
+            logger.warning(f"性别检测失败（回退空性别信息）: {e}")
+        step_times["7a_gender"] = time.time() - t0
+
+        save_debug("6_gender", {
+            spk: {"gender": g.value, "metric": round(m, 4)}
+            for spk, (g, m) in gender_map.items()
+        })
+
+        # 7b. 智能命名（仅在启用时运行 LLM 推断）
         if options["enable_naming"]:
-            update_progress(0.75, "智能命名...")
-
-            # 7a. 性别检测
-            t0 = time.time()
-            try:
-                gender_engine = options.get("gender_model") or "f0"
-                # 性别检测用原始音频，保留声纹特征
-                gender_map = detect_all_genders(wav_path_original, final_segments, engine_name=gender_engine)
-            except Exception as e:
-                logger.warning(f"性别检测失败（回退空性别信息）: {e}")
-            step_times["7a_gender"] = time.time() - t0
-
-            save_debug("6_gender", {
-                spk: {"gender": g.value, "metric": round(m, 4)}
-                for spk, (g, m) in gender_map.items()
-            })
-
-            # 7b. 智能命名
+            update_progress(0.80, "智能命名...")
             t0 = time.time()
             try:
                 naming_service = get_naming_service()
@@ -366,15 +372,27 @@ def _sync_process_audio(job_id: str) -> dict:
                 spk: info.model_dump() for spk, info in speakers.items()
             } if speakers else {})
 
-        # 默认说话人信息
+        # 7c. 性别兜底命名（智能命名未启用或失败时）
         if not speakers:
-            speaker_ids = set(seg.speaker for seg in final_segments if seg.speaker)
+            from meeting_ai.services.gender import Gender
+            speaker_ids = sorted(set(seg.speaker for seg in final_segments if seg.speaker))
+            gender_counters = {"male": 0, "female": 0, "unknown": 0}
             for spk_id in speaker_ids:
                 total_dur = sum(seg.duration for seg in final_segments if seg.speaker == spk_id)
                 seg_count = sum(1 for seg in final_segments if seg.speaker == spk_id)
+                gender, _ = gender_map.get(spk_id, (Gender.UNKNOWN, 0.0))
+                gender_counters[gender.value] = gender_counters.get(gender.value, 0) + 1
+                count = gender_counters[gender.value]
+                if gender == Gender.MALE:
+                    display_name = f"男性{count:02d}"
+                elif gender == Gender.FEMALE:
+                    display_name = f"女性{count:02d}"
+                else:
+                    display_name = f"说话人{count:02d}"
                 speakers[spk_id] = SpeakerInfo(
                     id=spk_id,
-                    display_name=spk_id,
+                    display_name=display_name,
+                    gender=gender,
                     total_duration=total_dur,
                     segment_count=seg_count,
                 )
@@ -535,6 +553,26 @@ async def get_job_result(job_id: str):
     )
 
 
+@router.delete("/jobs/{job_id}/segments/{segment_id}")
+async def delete_segment(job_id: str, segment_id: int):
+    """删除对话片段"""
+    job = _get_job(job_id)
+
+    if job["status"] != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="任务未完成")
+
+    result = job["result"]
+    segments = result["segments"]
+    if segment_id < 0 or segment_id >= len(segments):
+        raise HTTPException(status_code=404, detail="片段不存在")
+
+    segments.pop(segment_id)
+    for i, seg in enumerate(segments):
+        seg["id"] = i
+
+    return {"status": "ok", "new_segment_count": len(segments)}
+
+
 @router.put("/jobs/{job_id}/segments/{segment_id}")
 async def update_segment(job_id: str, segment_id: int, request: SegmentUpdateRequest):
     """更新对话片段"""
@@ -551,6 +589,18 @@ async def update_segment(job_id: str, segment_id: int, request: SegmentUpdateReq
 
     if request.text is not None:
         segment["text"] = request.text
+
+    if request.speaker is not None:
+        # 如果说话人不存在且提供了名称，自动创建
+        if request.speaker not in result["speakers"] and request.speaker_name:
+            result["speakers"][request.speaker] = {
+                "id": request.speaker,
+                "display_name": request.speaker_name,
+                "gender": None,
+                "total_duration": 0,
+                "segment_count": 0,
+            }
+        segment["speaker"] = request.speaker
 
     if request.speaker_name is not None:
         speaker_id = segment["speaker"]

@@ -313,6 +313,26 @@ def _save_result(output_dir: Path, data: dict, summary: str = None):
         (output_dir / "summary.md").write_text(summary, encoding="utf-8")
 
 
+@router.delete("/history/{history_id}/segments/{segment_id}")
+async def delete_history_segment(history_id: str, segment_id: int):
+    """删除历史记录中的对话片段"""
+    output_dir, data = _load_result(history_id)
+    segments = data.get("segments", [])
+
+    if segment_id < 0 or segment_id >= len(segments):
+        raise HTTPException(status_code=404, detail="片段不存在")
+
+    segments.pop(segment_id)
+
+    # 重新编号
+    for i, seg in enumerate(segments):
+        seg["id"] = i
+
+    data["segments"] = segments
+    _save_result(output_dir, data)
+    return {"status": "ok", "new_segment_count": len(segments)}
+
+
 @router.put("/history/{history_id}/segments/{segment_id}")
 async def update_history_segment(history_id: str, segment_id: int, request: SegmentUpdateRequest):
     """更新历史记录中的对话片段"""
@@ -326,6 +346,18 @@ async def update_history_segment(history_id: str, segment_id: int, request: Segm
 
     if request.text is not None:
         segment["text"] = request.text
+
+    if request.speaker is not None:
+        # 如果说话人不存在且提供了名称，自动创建
+        if request.speaker not in data.get("speakers", {}) and request.speaker_name:
+            data.setdefault("speakers", {})[request.speaker] = {
+                "id": request.speaker,
+                "display_name": request.speaker_name,
+                "gender": None,
+                "total_duration": 0,
+                "segment_count": 0,
+            }
+        segment["speaker"] = request.speaker
 
     if request.speaker_name is not None:
         speaker_id = segment["speaker"]

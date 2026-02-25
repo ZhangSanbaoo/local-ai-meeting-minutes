@@ -201,23 +201,13 @@ def denoise_deepfilter(audio: np.ndarray, sample_rate: int) -> np.ndarray:
             sess_options.inter_op_num_threads = 1
             sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
-            # 尝试 CUDA, 如果不支持则回退 CPU
-            # (模型的 FusedConv+Sigmoid 在某些 CUDA EP 版本不兼容)
-            if ort.get_device() == "GPU":
-                try:
-                    _df_session = ort.InferenceSession(
-                        str(model_path), sess_options,
-                        providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-                    )
-                except Exception:
-                    logger.info("DeepFilterNet3 CUDA 不兼容, 回退 CPU")
-                    _df_session = None
-
-            if _df_session is None:
-                _df_session = ort.InferenceSession(
-                    str(model_path), sess_options,
-                    providers=["CPUExecutionProvider"],
-                )
+            # DeepFilterNet3 ONNX 模型包含 FusedConv+Sigmoid，CUDA EP 不支持
+            # 会导致算子回退 CPU + GPU↔CPU Memcpy 反而更慢
+            # 该模型很小(~16MB) 且逐帧推理，CPU 足够快
+            _df_session = ort.InferenceSession(
+                str(model_path), sess_options,
+                providers=["CPUExecutionProvider"],
+            )
 
             logger.info(f"DeepFilterNet3 加载完成 (provider: {_df_session.get_providers()[0]})")
 
@@ -312,6 +302,13 @@ def enhance_clarity(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
         try:
             from resemble_enhance.enhancer.inference import enhance as resemble_enhance
+            from resemble_enhance.enhancer.download import REPO_DIR
+
+            # 模型已下载时直接指定 run_dir，跳过 git pull（离线环境友好）
+            run_dir = REPO_DIR / "enhancer_stage2"
+            model_path = run_dir / "ds" / "G" / "default" / "mp_rank_00_model_states.pt"
+            if not model_path.exists():
+                run_dir = None  # 未下载则走默认 download() 流程
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -320,8 +317,6 @@ def enhance_clarity(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
             logger.info(f"Resemble Enhance 语音清晰化开始 (device={device})...")
 
-            # enhance() 内部会自动下载模型、处理 resample、分块推理
-            # 返回 (enhanced_wav, sr) — enhanced_wav 是 CPU tensor
             enhanced, new_sr = resemble_enhance(
                 dwav=audio_tensor,
                 sr=sample_rate,
@@ -330,6 +325,7 @@ def enhance_clarity(audio: np.ndarray, sample_rate: int) -> np.ndarray:
                 solver="midpoint",  # ODE solver
                 lambd=0.9,          # 降噪程度 (0=纯增强, 1=最大降噪)
                 tau=0.5,            # CFM 温度 (0=保守, 1=最大增强)
+                run_dir=run_dir,
             )
         finally:
             # 恢复 PosixPath（无论成功还是失败）
