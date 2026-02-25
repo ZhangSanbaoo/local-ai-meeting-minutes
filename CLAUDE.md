@@ -59,7 +59,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 4. **字级对齐** - 逐字/词时间戳 + diarization → 精确说话人切分（见下文）
 5. **实时流式转写** - FunASR Paraformer / sherpa-onnx 双引擎，边录边转
 6. **智能命名** - LLM + 正则推断说话人身份（"张教授"、"小柔"），去重保护
-7. **性别检测** - f0 基频 / ECAPA-TDNN / Wav2Vec2 / Audeering (age+gender)，多引擎可选
+7. **性别检测** - f0 基频 / ECAPA-TDNN / Wav2Vec2，多引擎可选（默认始终运行作为兜底命名）
 8. **错别字校正** - LLM 修复转写错误
 9. **会议总结** - LLM 自动生成会议摘要
 10. **音频增强** - Demucs 人声分离 + DeepFilterNet3 降噪 + Resemble Enhance（可选）
@@ -79,7 +79,7 @@ git checkout snapshot/<timestamp> -- path/to/file
 | **强制对齐** | **Whisper** ← Paraformer | **✅ 已测试**：字级时间戳生成成功，word timestamps + LCS（B层）|
 | 标点恢复 | ct-punc | FunASR 生态标准（B层）✅ |
 | LLM | llama-cpp-python + Qwen2.5-7B | 用户可配置（A层）|
-| 性别检测 | f0 / ECAPA-TDNN / Wav2Vec2 / Audeering | 4 引擎可选（A层）|
+| 性别检测 | f0 / ECAPA-TDNN / Wav2Vec2 | 3 引擎可选（A层）|
 | 音频增强 | Demucs + DeepFilterNet3 + Resemble | 业界顶级（B层）✅ |
 | 音频处理 | ffmpeg | 格式转换 |
 | 配置 | pydantic-settings | 支持 .env 文件 |
@@ -480,7 +480,7 @@ npm run dev
 2. **LLM 识别的真实名字** - LLM 返回 kind="name" 且在对话中出现
 3. **主持人判断** - 问句比例 >= 30% 的说话人
 4. **LLM 推断的角色** - LLM 返回 kind="role"（如"组长"、"汇报人"）
-5. **性别兜底** - "男性01"、"女性01"、"说话人01"
+5. **性别兜底** - "男性01"、"女性01"、"说话人01"（性别检测默认始终运行，不依赖智能命名开关）
 
 ### 关键函数
 
@@ -553,6 +553,7 @@ python backend/scripts/download_all_models.py
 | 8 | 多引擎 ASR + VAD 预分段 + 字级对齐 | ✅ 完成 |
 | 9 | 多引擎说话人辨识 + 性别检测 | ✅ 完成 |
 | 10 | 音频增强专业管线 | ✅ 完成 |
+| 10.5 | 对话编辑增强 (删除/分割/合并/说话人重分配/新建) | ✅ 完成 |
 | 11 | Tauri 桌面应用打包 | 📅 待做 |
 
 ---
@@ -588,6 +589,9 @@ python backend/scripts/download_all_models.py
 - Tab 切换用 CSS 隐藏 (`className="hidden"`) 保持组件状态，不要条件渲染
 - 历史记录编辑需区分 `sourceType === 'history'` 调用正确 API 路径
 - `regenerateSummary` 超时设置 600s（长会议 LLM 生成慢）
+- 编辑对话框: 点击说话人名字 → 全局重命名; 点击编辑图标 → 单条片段说话人重分配 + 文本编辑
+- 说话人重分配: `updateSegmentSpeaker()` 只改单条片段, `updateSpeakerName()` 改所有同说话人片段
+- 新建说话人: 编辑对话框下拉菜单底部 "+ 新建说话人" → 自动生成 SPEAKER_XX ID
 
 ---
 
@@ -611,12 +615,15 @@ python backend/scripts/download_all_models.py
 - **历史记录删除失败**: 浏览器播放音频时文件被占用 → 添加重试机制（3次，0.5s间隔）+ 友好错误提示（409 Conflict）
 - **解决方案**: `shutil.rmtree()` 捕获 `PermissionError` → 自动重试 → 失败后提示"请先停止音频播放"
 
-### **当前阻塞问题（2026-02-15）**
-- ❌ **CUDA 库缺失**: `cublas64_12.dll not found` - faster-whisper 无法运行
-- ❌ **内存不足**: 测试时内存被占满
-- ❌ **硬盘空间不足**: 需要清理无用依赖和模型
-- ⏳ **Silero VAD**: 代码已完成，检测到 41 个语音段（测试成功），但完整流程未测试
-- ⏳ **Whisper 强制对齐**: 代码已完成，但完整流程未测试
+### **已修复的问题（2026-02-25）**
+- ✅ **CUDA 库缺失**: PyTorch CUDA 版本修复，faster-whisper 正常运行
+- ✅ **DeepFilterNet ONNX CUDA**: FusedConv+Sigmoid 不支持 → 强制 CPUExecutionProvider
+- ✅ **Resemble Enhance SSL**: 本地已下载时跳过 git pull
+- ✅ **torchcodec DLL**: ABI 不兼容 → 已卸载
+- ✅ **音频切换播放器不重置**: src 变更时重置 isPlaying 状态
+- ✅ **LLM 命名偏差**: 移除 prompt 中"组长"等有偏见的示例
+- ✅ **audeering-gender 移除**: 准确率不佳，保留 f0 / ECAPA / Wav2Vec2 三引擎
+- ✅ **性别兜底默认运行**: 不再依赖智能命名开关
 
 ---
 
@@ -630,4 +637,4 @@ python backend/scripts/download_all_models.py
 
 ---
 
-*最后更新: 2026-02-16 (✅ 添加 audeering-gender 第4引擎 + 修复 Windows 文件锁删除问题)*
+*最后更新: 2026-02-25 (✅ 对话编辑增强：片段删除/说话人重分配/新建说话人 + 移除 audeering-gender + 性别检测默认兜底 + 多项 bug 修复)*
