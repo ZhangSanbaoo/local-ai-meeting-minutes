@@ -3,7 +3,7 @@ import { Mic, Square, Loader2, Monitor, Power, PowerOff } from 'lucide-react'
 import { clsx } from 'clsx'
 import { formatTime } from '../utils/format'
 import { useAppStore } from '../stores/appStore'
-import { useAudioCapture } from '../hooks/useAudioCapture'
+import { useAudioCapture, type AudioSourceType } from '../hooks/useAudioCapture'
 import {
   useRealtimeWebSocket,
   type PartialSegment,
@@ -26,6 +26,13 @@ export function RealtimePage() {
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedMicId, setSelectedMicId] = useState('default')
   const [defaultMicName, setDefaultMicName] = useState<string | null>(null)
+
+  // System audio capture
+  const [enableSystemAudio, setEnableSystemAudio] = useState(false)
+  const [enableMicrophone, setEnableMicrophone] = useState(true)
+
+  // Input validation error
+  const [inputError, setInputError] = useState<string | null>(null)
 
   // LLM models
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
@@ -183,6 +190,9 @@ export function RealtimePage() {
   const ws = useRealtimeWebSocket(wsCallbacks)
 
   // ── Audio capture ──
+  // Ref to allow onSystemAudioEnded callback to call handleStopRecording
+  const stopRecordingRef = useRef<(() => void) | null>(null)
+
   // Only send audio chunks after backend confirms recording has started.
   // This prevents blank audio at the beginning during model loading.
   const audioCallbacks = {
@@ -195,6 +205,11 @@ export function RealtimePage() {
       },
       [ws]
     ),
+    onSystemAudioEnded: useCallback(() => {
+      // User stopped screen sharing — auto-stop recording
+      console.log('[RealtimePage] System audio ended, stopping recording')
+      stopRecordingRef.current?.()
+    }, []),
   }
 
   const audio = useAudioCapture(audioCallbacks)
@@ -234,6 +249,21 @@ export function RealtimePage() {
 
   // ── Start recording ──
   const handleStartRecording = useCallback(async () => {
+    // Determine source type from UI selections
+    if (!enableMicrophone && !enableSystemAudio) {
+      setInputError('请至少选择一个输入源（麦克风或系统音频）')
+      return
+    }
+    let sourceType: AudioSourceType
+    if (enableMicrophone && enableSystemAudio) {
+      sourceType = 'mixed'
+    } else if (enableSystemAudio) {
+      sourceType = 'system_audio'
+    } else {
+      sourceType = 'microphone'
+    }
+
+    setInputError(null)
     clearRealtimeSegments()
     setPostProcessProgress(0, '')
     setIsStartPending(true)
@@ -243,8 +273,8 @@ export function RealtimePage() {
     // other async operations first, the gesture context expires.
     try {
       await audio.start({
-        sourceType: 'microphone',
-        deviceId: selectedMicId || 'default',
+        sourceType,
+        deviceId: enableMicrophone ? (selectedMicId || 'default') : undefined,
         targetSampleRate: 16000,
         chunkDurationMs: 200,
       })
@@ -302,6 +332,8 @@ export function RealtimePage() {
     meetingName,
     selectedMicId,
     selectedEngine,
+    enableMicrophone,
+    enableSystemAudio,
     enableNaming,
     enableCorrection,
     enableSummary,
@@ -319,6 +351,9 @@ export function RealtimePage() {
     setRecording({ isRecording: false })
     setIsStartPending(false)
   }, [ws, audio, timer, setRecording])
+
+  // Keep ref in sync so onSystemAudioEnded can call handleStopRecording
+  stopRecordingRef.current = handleStopRecording
 
   // ── Derived state ──
   const isRecording = realtimeState === 'recording'
@@ -454,27 +489,52 @@ export function RealtimePage() {
 
       {/* ── Row 2: 录音控制 ── */}
       <div className="flex items-center justify-center gap-4 py-3 bg-gray-100">
-        {/* 系统音频（待实现） */}
-        <div className="flex items-center gap-1 opacity-50">
-          <Monitor className="w-4 h-4 text-gray-500" />
+        {/* 系统音频选择 */}
+        <div className="flex items-center gap-1">
+          <Monitor className={clsx('w-4 h-4', enableSystemAudio ? 'text-blue-600' : 'text-gray-500')} />
           <select
-            disabled={true}
-            className="px-2 py-2 border border-gray-300 rounded text-sm bg-gray-200 cursor-not-allowed max-w-[140px]"
-            title="系统音频（待实现）"
+            value={enableSystemAudio ? 'enabled' : 'disabled'}
+            onChange={(e) => setEnableSystemAudio(e.target.value === 'enabled')}
+            disabled={controlsDisabled}
+            className={clsx(
+              'px-2 py-2 border rounded text-sm max-w-[200px]',
+              controlsDisabled
+                ? 'bg-gray-200 cursor-not-allowed border-gray-300'
+                : enableSystemAudio
+                  ? 'border-blue-400 bg-blue-50 text-blue-800'
+                  : 'border-gray-300'
+            )}
+            title="系统音频（通过屏幕共享捕获）"
           >
-            <option>系统音频(待实现)</option>
+            <option value="disabled">不启用</option>
+            <option value="enabled">系统音频（屏幕共享）</option>
           </select>
         </div>
 
         {/* 麦克风选择 */}
         <div className="flex items-center gap-1">
-          <Mic className="w-4 h-4 text-gray-500" />
+          <Mic className={clsx('w-4 h-4', enableMicrophone ? 'text-blue-600' : 'text-gray-500')} />
           <select
-            value={selectedMicId}
-            onChange={(e) => setSelectedMicId(e.target.value)}
+            value={enableMicrophone ? selectedMicId : 'disabled'}
+            onChange={(e) => {
+              if (e.target.value === 'disabled') {
+                setEnableMicrophone(false)
+              } else {
+                setEnableMicrophone(true)
+                setSelectedMicId(e.target.value)
+              }
+            }}
             disabled={controlsDisabled}
-            className="px-2 py-2 border border-gray-300 rounded text-sm max-w-[280px] disabled:bg-gray-200 disabled:cursor-not-allowed"
+            className={clsx(
+              'px-2 py-2 border rounded text-sm max-w-[280px]',
+              controlsDisabled
+                ? 'bg-gray-200 cursor-not-allowed border-gray-300'
+                : enableMicrophone
+                  ? 'border-blue-400 bg-blue-50 text-blue-800'
+                  : 'border-gray-300'
+            )}
           >
+            <option value="disabled">不启用</option>
             <option value="default">
               {defaultMicName ? `默认 (${defaultMicName})` : '默认麦克风'}
             </option>
@@ -673,8 +733,8 @@ export function RealtimePage() {
 
         <div className="flex-1" />
 
-        {audio.error && (
-          <span className="text-xs text-red-500">{audio.error}</span>
+        {(audio.error || inputError) && (
+          <span className="text-xs text-red-500">{audio.error || inputError}</span>
         )}
 
         <span className="text-xs text-gray-400">

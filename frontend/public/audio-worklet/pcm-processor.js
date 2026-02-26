@@ -58,8 +58,21 @@ class PCMProcessor extends AudioWorkletProcessor {
     // Reference: https://bugzilla.mozilla.org/show_bug.cgi?id=1629478
     if (!input || input.length === 0) return true
 
-    // Take first channel (mono)
-    const channelData = input[0]
+    // Mix to mono: if 2 channels present (mixed mode via ChannelMergerNode),
+    // average ch0 and ch1 with 0.5 scaling to prevent clipping.
+    // Single channel passes through unchanged (existing microphone-only behavior).
+    let channelData
+    if (input.length >= 2 && input[1] && input[1].length > 0) {
+      const ch0 = input[0]
+      const ch1 = input[1]
+      const len = Math.min(ch0.length, ch1.length)
+      channelData = new Float32Array(len)
+      for (let i = 0; i < len; i++) {
+        channelData[i] = 0.5 * (ch0[i] + ch1[i])
+      }
+    } else {
+      channelData = input[0]
+    }
     if (!channelData || channelData.length === 0) return true
 
     // Calculate volume (RMS) and peak
