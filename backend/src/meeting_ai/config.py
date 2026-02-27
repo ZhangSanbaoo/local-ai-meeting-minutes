@@ -126,12 +126,12 @@ class StreamingSettings(BaseSettings):
         "(单位: 60ms帧; 首位=1 启用动态右看，静默时自动扩展上下文提升精度)",
     )
     funasr_encoder_chunk_look_back: int = Field(
-        default=4,
-        description="编码器左看 chunk 数",
+        default=6,
+        description="编码器左看 chunk 数（增大可提高准确率，略增延迟）",
     )
     funasr_decoder_chunk_look_back: int = Field(
-        default=1,
-        description="解码器左看 chunk 数",
+        default=2,
+        description="解码器左看 chunk 数（增大可提高准确率，略增延迟）",
     )
 
     # ── sherpa-onnx 配置 ─────────────────────────────────────────

@@ -607,24 +607,30 @@ async def _post_process_recording(
             "message": "对齐文本与说话人...",
         })
 
-        from ...models import Segment, TranscriptResult
+        from ...models import CharTimestamp, Segment, TranscriptResult
         from ...services.alignment import (
             align_transcript_with_speakers,
             fix_unknown_speakers,
             merge_adjacent_segments,
         )
 
-        # 将流式片段转换为标准 Segment
-        asr_segments = [
-            Segment(
+        # 将流式片段转换为标准 Segment + 提取字级时间戳
+        asr_segments = []
+        all_char_ts: list[list[CharTimestamp]] = []
+        has_any_ts = False
+        for seg in streaming_segments:
+            asr_segments.append(Segment(
                 id=seg.id,
                 start=seg.start,
                 end=seg.end,
                 text=seg.text,
                 speaker=None,
-            )
-            for seg in streaming_segments
-        ]
+            ))
+            if seg.char_timestamps:
+                all_char_ts.append(seg.char_timestamps)
+                has_any_ts = True
+            else:
+                all_char_ts.append([])
 
         # 估算音频时长
         duration = wav_path.stat().st_size / (16000 * 2)  # 16kHz 16bit mono
@@ -634,6 +640,12 @@ async def _post_process_recording(
             language_probability=0.95,
             duration=duration,
             segments=asr_segments,
+            char_timestamps=all_char_ts if has_any_ts else None,
+        )
+
+        logger.info(
+            f"流式片段 → TranscriptResult: {len(asr_segments)} 段, "
+            f"字级时间戳={'有' if has_any_ts else '无'}"
         )
 
         aligned = await loop.run_in_executor(
@@ -643,9 +655,8 @@ async def _post_process_recording(
             diar_result,
         )
         fixed = fix_unknown_speakers(aligned)
-        # 实时录音：保留 ASR 引擎的语义分段，只合并极短间隔（<50ms）的同说话人片段
-        # 文件处理用默认 max_gap=0.3s（见 process.py）
-        merged = merge_adjacent_segments(fixed, max_gap=0.05)
+        # 有字级时间戳时对齐精度与文件处理一致，合并策略也应一致
+        merged = merge_adjacent_segments(fixed, max_gap=0.3)
 
         await send_json(ws, {
             "type": "post_progress",

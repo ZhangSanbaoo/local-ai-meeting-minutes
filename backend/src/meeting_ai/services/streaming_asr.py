@@ -34,7 +34,7 @@ import numpy as np
 
 from ..config import get_settings
 from ..logger import get_logger
-from ..models import StreamingSegment
+from ..models import CharTimestamp, StreamingSegment
 
 logger = get_logger("services.streaming_asr")
 
@@ -62,6 +62,13 @@ class StreamingSession:
     # fsmn-vad 独立状态
     vad_cache: dict = field(default_factory=dict)
     is_speech: bool = False
+    # 当前片段累积的字级时间戳 [(char, start, end), ...]
+    current_char_timestamps: list = field(default_factory=list)
+    # 前缀锁定（减少文字闪烁）
+    locked_text: str = ""           # 已锁定的稳定前缀
+    pending_text: str = ""          # 上次待确认的扩展部分
+    pending_stable_count: int = 0   # 连续稳定次数
+    STABILITY_THRESHOLD: int = 3    # 连续 N 次相同才锁定
 
 
 # ---------------------------------------------------------------------------
@@ -261,19 +268,33 @@ class FunASREngine(StreamingASREngine):
 
         results: ASRResult = []
 
-        # ── 1. 累积 ASR 文本 ──
+        # ── 1. 累积 ASR 文本 + 提取时间戳 ──
         new_text = ""
+        new_char_ts: list[CharTimestamp] = []
         if result:
             for r in result:
                 text = r.get("text", "").strip()
                 if text:
                     new_text += text
+                # 提取 FunASR 流式 timestamp 字段: [[start_ms, end_ms], ...]
+                timestamps = r.get("timestamp", [])
+                if timestamps and text:
+                    chars = list(text)
+                    for i, ts_pair in enumerate(timestamps):
+                        if i < len(chars) and len(ts_pair) >= 2:
+                            new_char_ts.append(CharTimestamp(
+                                char=chars[i],
+                                start=ts_pair[0] / 1000.0,
+                                end=ts_pair[1] / 1000.0,
+                            ))
 
         if new_text:
             if not session.current_text:
                 session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
             session.current_text += new_text
             session.last_text_time = chunk_end_time
+            if new_char_ts:
+                session.current_char_timestamps.extend(new_char_ts)
 
         # ── 2. 运行 VAD（与 ASR 独立 cache） ──
         vad_speech_end = False
@@ -314,67 +335,163 @@ class FunASREngine(StreamingASREngine):
             # 录音结束：强制输出所有累积文本
             if session.current_text:
                 final_text = self._add_punctuation(session.current_text)
+                char_ts = session.current_char_timestamps or None
                 segment = StreamingSegment(
                     id=session.segment_counter,
                     start=session.current_segment_start,
                     end=chunk_end_time,
                     text=final_text,
                     temp_speaker="SPEAKER_00",
+                    char_timestamps=char_ts,
                 )
                 results.append((segment, True))
                 session.segment_counter += 1
-                session.current_text = ""
-                session.last_text_time = 0.0
+                self._reset_segment_state(session)
         elif vad_speech_end and session.current_text:
             # VAD 检测到语音结束 → 确认当前片段
             segment_end = min(vad_end_time, chunk_end_time) if vad_end_time > 0 else session.last_text_time
             final_text = self._add_punctuation(session.current_text)
-            segment = StreamingSegment(
-                id=session.segment_counter,
-                start=session.current_segment_start,
-                end=segment_end,
-                text=final_text,
-                temp_speaker="SPEAKER_00",
-            )
-            results.append((segment, True))
-            session.segment_counter += 1
-            session.current_text = ""
-            session.last_text_time = 0.0
+            char_ts = session.current_char_timestamps or None
+
+            # P1-3: 短回应合并（"嗯"等 <=2字 且 <0.5s → 合并到上一段）
+            seg_duration = segment_end - session.current_segment_start
+            if (
+                len(final_text.strip()) <= 2
+                and seg_duration < 0.5
+                and results  # 本轮有前一段
+            ):
+                prev_seg, prev_final = results[-1]
+                if prev_final:
+                    # 合并到上一段
+                    merged_seg = StreamingSegment(
+                        id=prev_seg.id,
+                        start=prev_seg.start,
+                        end=segment_end,
+                        text=prev_seg.text + final_text,
+                        temp_speaker=prev_seg.temp_speaker,
+                        char_timestamps=(
+                            (prev_seg.char_timestamps or []) + (char_ts or [])
+                        ) or None,
+                    )
+                    results[-1] = (merged_seg, True)
+                    self._reset_segment_state(session)
+                    logger.debug(f"短回应合并: '{final_text}' → segment {prev_seg.id}")
+                else:
+                    self._emit_final_segment(
+                        session, results, segment_end, final_text, char_ts,
+                    )
+            else:
+                self._emit_final_segment(
+                    session, results, segment_end, final_text, char_ts,
+                )
             logger.debug(
-                f"VAD 分段: segment {segment.id}, "
-                f"vad_end={vad_end_time:.1f}s, {segment.text[:30]}..."
+                f"VAD 分段: segment {session.segment_counter - 1}, "
+                f"vad_end={vad_end_time:.1f}s, {final_text[:30]}..."
             )
         elif silence_duration >= FALLBACK_SILENCE_SECONDS:
             # Fallback: VAD 未触发但文字已静默很久
             segment_end = session.last_text_time
             final_text = self._add_punctuation(session.current_text)
+            char_ts = session.current_char_timestamps or None
             segment = StreamingSegment(
                 id=session.segment_counter,
                 start=session.current_segment_start,
                 end=segment_end,
                 text=final_text,
                 temp_speaker="SPEAKER_00",
+                char_timestamps=char_ts,
             )
             results.append((segment, True))
             session.segment_counter += 1
-            session.current_text = ""
-            session.last_text_time = 0.0
+            self._reset_segment_state(session)
             logger.debug(
                 f"Fallback 分段: segment {segment.id}, "
                 f"silence={silence_duration:.1f}s, {segment.text[:30]}..."
             )
         elif session.current_text:
             # 发送部分更新（同一 segment_id，前端更新显示）
+            # P2: 前缀锁定 — 稳定文本不闪烁
+            display_text = self._apply_prefix_locking(session, session.current_text)
             segment = StreamingSegment(
                 id=session.segment_counter,
                 start=session.current_segment_start,
                 end=chunk_end_time,
-                text=session.current_text,
+                text=display_text,
                 temp_speaker="SPEAKER_00",
             )
             results.append((segment, False))
 
         return results
+
+    @staticmethod
+    def _reset_segment_state(session: StreamingSession) -> None:
+        """重置片段累积状态"""
+        session.current_text = ""
+        session.last_text_time = 0.0
+        session.current_char_timestamps = []
+        session.locked_text = ""
+        session.pending_text = ""
+        session.pending_stable_count = 0
+
+    @staticmethod
+    def _emit_final_segment(
+        session: StreamingSession,
+        results: ASRResult,
+        end_time: float,
+        text: str,
+        char_ts: list[CharTimestamp] | None,
+    ) -> None:
+        """创建并追加一个最终片段，重置片段状态"""
+        segment = StreamingSegment(
+            id=session.segment_counter,
+            start=session.current_segment_start,
+            end=end_time,
+            text=text,
+            temp_speaker="SPEAKER_00",
+            char_timestamps=char_ts,
+        )
+        results.append((segment, True))
+        session.segment_counter += 1
+        FunASREngine._reset_segment_state(session)
+
+    @staticmethod
+    def _apply_prefix_locking(session: StreamingSession, full_text: str) -> str:
+        """
+        前缀锁定：减少流式部分结果的文字闪烁。
+
+        已锁定的文本前缀不会改变，只有尾部可变。
+        连续 N 次扩展部分相同 → 锁定为新前缀。
+        """
+        locked = session.locked_text
+
+        if full_text.startswith(locked):
+            # 正常扩展：新文本以已锁定前缀开头
+            extension = full_text[len(locked):]
+            if extension == session.pending_text and extension:
+                session.pending_stable_count += 1
+                if session.pending_stable_count >= session.STABILITY_THRESHOLD:
+                    # 扩展部分稳定，锁定
+                    session.locked_text = full_text
+                    session.pending_text = ""
+                    session.pending_stable_count = 0
+            else:
+                session.pending_text = extension
+                session.pending_stable_count = 1 if extension else 0
+            return full_text
+        else:
+            # ASR 回退修改了已锁定文本 — 保留锁定前缀 + 新文本后缀
+            # 找到最长公共前缀
+            common_len = 0
+            for i in range(min(len(locked), len(full_text))):
+                if locked[i] == full_text[i]:
+                    common_len = i + 1
+                else:
+                    break
+            # 保守处理：用 ASR 的最新完整文本（回退可能是更准确的修正）
+            session.locked_text = full_text[:common_len]
+            session.pending_text = full_text[common_len:]
+            session.pending_stable_count = 0
+            return full_text
 
     def _add_punctuation(self, text: str) -> str:
         """对文本添加标点恢复（如果标点模型可用）"""
@@ -492,7 +609,7 @@ class SherpaOnnxEngine(StreamingASREngine):
             feature_dim=80,
             enable_endpoint_detection=True,
             rule1_min_trailing_silence=2.4,
-            rule2_min_trailing_silence=1.2,
+            rule2_min_trailing_silence=0.8,   # P1: 会议场景说话人切换更快
             rule3_min_utterance_length=20.0,
             decoding_method="greedy_search",
             provider=provider,
@@ -557,6 +674,9 @@ class SherpaOnnxEngine(StreamingASREngine):
         result = self._recognizer.get_result(stream)
         text = result.text.strip() if hasattr(result, "text") else str(result).strip()
 
+        # P0-2: 提取 sherpa-onnx 字级时间戳
+        char_ts = self._extract_sherpa_timestamps(result, text)
+
         if is_final:
             # 录音结束：返回当前文本作为最终片段
             if text:
@@ -566,39 +686,146 @@ class SherpaOnnxEngine(StreamingASREngine):
                     end=chunk_end_time,
                     text=text,
                     temp_speaker="SPEAKER_00",
+                    char_timestamps=char_ts,
                 )
                 results.append((segment, True))
                 session.segment_counter += 1
+                self._reset_session_segment(session)
         elif self._recognizer.is_endpoint(stream):
             # 端点检测：当前句子完成
             if text:
-                segment = StreamingSegment(
-                    id=session.segment_counter,
-                    start=session.current_segment_start,
-                    end=chunk_end_time,
-                    text=text,
-                    temp_speaker="SPEAKER_00",
-                )
-                results.append((segment, True))
-                session.segment_counter += 1
+                seg_duration = chunk_end_time - session.current_segment_start
+                # P1-3: 短回应合并
+                if (
+                    len(text.strip()) <= 2
+                    and seg_duration < 0.5
+                    and results
+                ):
+                    prev_seg, prev_final = results[-1]
+                    if prev_final:
+                        merged_seg = StreamingSegment(
+                            id=prev_seg.id,
+                            start=prev_seg.start,
+                            end=chunk_end_time,
+                            text=prev_seg.text + text,
+                            temp_speaker=prev_seg.temp_speaker,
+                            char_timestamps=(
+                                (prev_seg.char_timestamps or []) + (char_ts or [])
+                            ) or None,
+                        )
+                        results[-1] = (merged_seg, True)
+                        logger.debug(f"短回应合并: '{text}' → segment {prev_seg.id}")
+                    else:
+                        segment = StreamingSegment(
+                            id=session.segment_counter,
+                            start=session.current_segment_start,
+                            end=chunk_end_time,
+                            text=text,
+                            temp_speaker="SPEAKER_00",
+                            char_timestamps=char_ts,
+                        )
+                        results.append((segment, True))
+                        session.segment_counter += 1
+                else:
+                    segment = StreamingSegment(
+                        id=session.segment_counter,
+                        start=session.current_segment_start,
+                        end=chunk_end_time,
+                        text=text,
+                        temp_speaker="SPEAKER_00",
+                        char_timestamps=char_ts,
+                    )
+                    results.append((segment, True))
+                    session.segment_counter += 1
             # 重置流，开始新句子
             self._recognizer.reset(stream)
+            self._reset_session_segment(session)
             session.current_segment_start = chunk_end_time
         elif text:
             # 部分识别：更新当前片段（同一 segment_id）
             if not session.current_text:
                 session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
             session.current_text = text  # 记录用于跟踪
+            # P2: 前缀锁定
+            display_text = self._apply_prefix_locking(session, text)
             segment = StreamingSegment(
                 id=session.segment_counter,
                 start=session.current_segment_start,
                 end=chunk_end_time,
-                text=text,
+                text=display_text,
                 temp_speaker="SPEAKER_00",
             )
             results.append((segment, False))
 
         return results
+
+    @staticmethod
+    def _extract_sherpa_timestamps(
+        result: Any, text: str,
+    ) -> list[CharTimestamp] | None:
+        """从 sherpa-onnx result 中提取字级时间戳"""
+        timestamps = getattr(result, "timestamps", None)
+        tokens = getattr(result, "tokens", None)
+        if not timestamps or not tokens:
+            return None
+
+        char_ts: list[CharTimestamp] = []
+        # sherpa-onnx tokens 是 subword tokens，需要合并为字级
+        # timestamps[i] 是 tokens[i] 的开始时间（秒）
+        for i, (token, ts) in enumerate(zip(tokens, timestamps)):
+            token = token.strip()
+            if not token:
+                continue
+            start = ts
+            # 结束时间 = 下一个 token 的开始时间，或用小偏移估算
+            end = timestamps[i + 1] if i + 1 < len(timestamps) else ts + 0.1
+            # 均匀分配 token 时长给每个字
+            ch_duration = (end - start) / len(token)
+            for j, ch in enumerate(token):
+                ch_start = start + j * ch_duration
+                char_ts.append(CharTimestamp(
+                    char=ch,
+                    start=ch_start,
+                    end=ch_start + ch_duration,
+                ))
+
+        return char_ts if char_ts else None
+
+    @staticmethod
+    def _reset_session_segment(session: StreamingSession) -> None:
+        """重置片段累积状态"""
+        session.current_text = ""
+        session.locked_text = ""
+        session.pending_text = ""
+        session.pending_stable_count = 0
+
+    @staticmethod
+    def _apply_prefix_locking(session: StreamingSession, full_text: str) -> str:
+        """前缀锁定（与 FunASREngine 相同逻辑）"""
+        locked = session.locked_text
+        if full_text.startswith(locked):
+            extension = full_text[len(locked):]
+            if extension == session.pending_text and extension:
+                session.pending_stable_count += 1
+                if session.pending_stable_count >= session.STABILITY_THRESHOLD:
+                    session.locked_text = full_text
+                    session.pending_text = ""
+                    session.pending_stable_count = 0
+            else:
+                session.pending_text = extension
+                session.pending_stable_count = 1 if extension else 0
+            return full_text
+        else:
+            common_len = 0
+            for i in range(min(len(locked), len(full_text))):
+                if locked[i] == full_text[i]:
+                    common_len = i + 1
+                else:
+                    break
+            session.locked_text = full_text[:common_len]
+            session.pending_text = full_text[common_len:]
+            session.pending_stable_count = 0
+            return full_text
 
     def unload(self) -> None:
         if self._recognizer is not None:

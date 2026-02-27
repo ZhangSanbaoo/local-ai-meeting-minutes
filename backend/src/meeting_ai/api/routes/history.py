@@ -71,6 +71,8 @@ async def list_history(limit: int = 50, offset: int = 0):
         except Exception:
             continue
 
+    # 按创建时间倒序（最新的排最前面）
+    items.sort(key=lambda x: x.created_at, reverse=True)
     total = len(items)
     items = items[offset:offset + limit]
 

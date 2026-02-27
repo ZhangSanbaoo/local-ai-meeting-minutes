@@ -7,7 +7,7 @@
 from ..config import get_settings
 from ..logger import get_logger
 from ..models import MeetingSummary, Segment, SpeakerInfo
-from .llm import get_llm
+from .llm import get_llm, strip_think_tags
 
 logger = get_logger("services.summary")
 
@@ -271,7 +271,7 @@ def summarize_meeting(
             max_tokens=2048,  # 增加 token 数，允许更详细的输出
         )
         
-        content = response["choices"][0]["message"]["content"].strip()
+        content = strip_think_tags(response["choices"][0]["message"]["content"]).strip()
         logger.debug(f"LLM 响应:\n{content}")
         
         # 解析响应

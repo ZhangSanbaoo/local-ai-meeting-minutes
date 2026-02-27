@@ -7,7 +7,7 @@
 from ..config import get_settings
 from ..logger import get_logger
 from ..models import Segment
-from .llm import get_llm
+from .llm import get_llm, strip_think_tags
 
 logger = get_logger("services.correction")
 
@@ -51,8 +51,8 @@ def correct_text(text: str) -> str:
             max_tokens=len(text) * 2,  # 足够容纳修复后的文本
         )
         
-        corrected = response["choices"][0]["message"]["content"].strip()
-        
+        corrected = strip_think_tags(response["choices"][0]["message"]["content"]).strip()
+
         # 基本验证：修复后的文本长度不应该差太多
         if corrected and 0.5 < len(corrected) / len(text) < 2.0:
             # 去除可能的引号
@@ -150,8 +150,8 @@ def correct_transcript_batch(texts: list[str]) -> list[str]:
             max_tokens=len(combined) * 2,
         )
         
-        result = response["choices"][0]["message"]["content"].strip()
-        
+        result = strip_think_tags(response["choices"][0]["message"]["content"]).strip()
+
         # 解析结果
         corrected_texts = texts.copy()
         for line in result.split("\n"):

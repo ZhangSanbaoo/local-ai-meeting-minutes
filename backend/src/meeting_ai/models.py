@@ -72,6 +72,10 @@ class StreamingSegment(BaseModel):
     end: float = Field(ge=0, description="结束时间（秒）")
     text: str = Field(default="", description="转写文本")
     temp_speaker: str = Field(description="临时说话人ID（如 SPEAKER_00）")
+    # 字级时间戳（流式 ASR 提取，用于后处理对齐）
+    char_timestamps: list[CharTimestamp] | None = Field(
+        default=None, exclude=True, description="逐字时间戳 [(char, start, end), ...]",
+    )
     # embedding 不序列化到 JSON，仅用于运行时匹配
     embedding: Any | None = Field(default=None, exclude=True, description="说话人 embedding")
 

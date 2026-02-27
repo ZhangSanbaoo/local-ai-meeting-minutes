@@ -15,6 +15,7 @@ from llama_cpp import Llama
 from ..config import get_settings
 from ..logger import get_logger
 from ..models import Gender, Segment, SpeakerInfo
+from .llm import strip_think_tags
 
 logger = get_logger("services.llm_postprocess")
 
@@ -112,14 +113,14 @@ gender 只能是 "male"、"female" 或 "unknown"。
                 max_tokens=512,
             )
 
-            content = response["choices"][0]["message"]["content"]
+            content = strip_think_tags(response["choices"][0]["message"]["content"])
             logger.debug(f"Gender inference response:\n{content}")
 
             # 解析 JSON
             json_match = re.search(r'\{[\s\S]*\}', content)
             if json_match:
                 result = json.loads(json_match.group())
-                
+
                 genders = {}
                 for spk_id, data in result.items():
                     gender_str = data.get("gender", "unknown").lower()
@@ -206,7 +207,7 @@ gender 只能是 "male"、"female" 或 "unknown"。
                 max_tokens=1024,
             )
 
-            content = response["choices"][0]["message"]["content"]
+            content = strip_think_tags(response["choices"][0]["message"]["content"])
             logger.debug(f"Typo fix response:\n{content}")
 
             # 解析 JSON

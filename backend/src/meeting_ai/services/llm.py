@@ -4,6 +4,7 @@
 提供统一的 LLM 实例，避免重复加载。
 """
 
+import re
 from pathlib import Path
 
 from ..config import get_settings
@@ -81,3 +82,14 @@ def reset_llm():
     global _llm, _llm_state
     _llm = None
     _llm_state = "unloaded"
+
+
+# Qwen3 等模型会输出 <think>...</think> 思考标签
+_THINK_TAG_RE = re.compile(r"<think>[\s\S]*?</think>\s*", re.IGNORECASE)
+
+
+def strip_think_tags(text: str) -> str:
+    """移除 LLM 输出中的 <think>...</think> 深度思考标签（Qwen3 等模型）"""
+    if not text or "<think>" not in text.lower():
+        return text
+    return _THINK_TAG_RE.sub("", text).strip()

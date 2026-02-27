@@ -246,7 +246,8 @@ class NamingService:
 - "老王" → 老王
 - "老师" → （忽略，仅职业）
 
-只输出提取的人名，用逗号分隔。如果都没有人名，输出"无"："""
+只输出提取的人名，用逗号分隔。如果都没有人名，输出"无"。
+不要输出任何解释、分析或思考过程，只输出结果："""
 
         try:
             response = self.llm.create_chat_completion(
@@ -255,7 +256,8 @@ class NamingService:
                 max_tokens=100,
             )
             
-            content = response["choices"][0]["message"]["content"].strip()
+            from .llm import strip_think_tags
+            content = strip_think_tags(response["choices"][0]["message"]["content"]).strip()
             logger.debug(f"LLM 名字验证结果: {content}")
             
             if content == "无" or not content:
@@ -263,18 +265,24 @@ class NamingService:
 
             # 解析返回的名字
             # LLM 可能返回提取后的人名（如"张教授"），也可能返回原候选词
+            # 注意：Qwen3 等模型可能输出解释性文字，需要严格过滤
             validated = []
             for name in content.replace("，", ",").split(","):
-                name = name.strip()
+                name = name.strip().strip('"').strip("'").strip("「」")
                 if not name:
+                    continue
+                # 过滤明显不是人名的返回（长度过长 = 解释性文字）
+                if len(name) > 10:
                     continue
 
                 # 1. 直接匹配原候选词
                 if name in candidate_names:
                     validated.append(name)
                 # 2. LLM 提取出的名字（可能是从"请问张教授"中提取的"张教授"）
-                # 检查这个名字是否是某个候选词的子串
-                elif any(name in cand or cand in name for cand in candidate_names):
+                # 名字必须足够短（<=5字）且是候选词的子串，或候选词是名字的子串
+                elif len(name) <= 5 and any(
+                    name in cand or cand in name for cand in candidate_names
+                ):
                     validated.append(name)
 
             # 去重
@@ -552,7 +560,7 @@ class NamingService:
 4. kind 只能是 "name"（有真实名字）或 "role"（有对话支撑的角色）
 5. confidence 只有在有明确证据时才能大于 0.7
 
-只输出 JSON："""
+只输出 JSON，不要输出任何解释、分析或思考过程："""
 
         logger.debug(f"LLM Prompt:\n{prompt}")
         
@@ -565,9 +573,10 @@ class NamingService:
             max_tokens=self._settings.max_tokens,
         )
         
-        content = response["choices"][0]["message"]["content"]
+        from .llm import strip_think_tags
+        content = strip_think_tags(response["choices"][0]["message"]["content"])
         logger.debug(f"LLM Response:\n{content}")
-        
+
         # 解析 JSON
         try:
             # 尝试提取 JSON 部分

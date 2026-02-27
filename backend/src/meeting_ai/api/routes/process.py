@@ -218,6 +218,9 @@ def _sync_process_audio(job_id: str) -> dict:
             if not llm_model_name.startswith("llm/") and not llm_model_name.startswith("llm\\"):
                 llm_model_name = f"llm/{llm_model_name}"
             settings.llm.model_path = Path(llm_model_name)
+            # 切换模型后必须重置 LLM 单例，否则会继续使用旧模型
+            from meeting_ai.services.llm import reset_llm
+            reset_llm()
         else:
             settings.llm.enabled = False
 
