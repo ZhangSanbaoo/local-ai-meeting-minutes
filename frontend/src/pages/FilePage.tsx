@@ -108,6 +108,9 @@ export function FilePage() {
   // 重新生成总结状态
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false)
 
+  // 重新生成对话状态
+  const [isRegeneratingTranscript, setIsRegeneratingTranscript] = useState(false)
+
   // 轮询任务状态
   const pollingRef = useRef<number | null>(null)
 
@@ -222,6 +225,13 @@ export function FilePage() {
     // 验证必选项
     if (!selectedAsrModel) {
       alert('请选择语音识别模型')
+      return
+    }
+
+    // 勾选了需要 LLM 的功能但没选 LLM
+    const needsLlm = enableNaming || enableCorrection || enableSummary
+    if (needsLlm && (!selectedLlmModel || selectedLlmModel === 'disabled')) {
+      alert('已勾选智能命名/错别字校正/会议总结，请先选择一个 LLM 模型')
       return
     }
 
@@ -426,6 +436,48 @@ export function FilePage() {
       setIsRegeneratingSummary(false)
     }
   }, [selectedHistoryId, isRegeneratingSummary, updateSummary, selectedLlmModel])
+
+  // 重新生成对话（ASR 重新转写 + 对齐 + 校正 + 命名）
+  const handleRegenerateTranscript = useCallback(async () => {
+    if (!selectedHistoryId || isRegeneratingTranscript) return
+
+    // ASR 模型必选
+    if (!selectedAsrModel) {
+      alert('请选择语音识别模型')
+      return
+    }
+
+    // 勾选了需要 LLM 的功能但没选 LLM
+    const needsLlm = enableNaming || enableCorrection
+    if (needsLlm && (!selectedLlmModel || selectedLlmModel === 'disabled')) {
+      alert('已勾选智能命名/错别字校正，请先选择一个 LLM 模型')
+      return
+    }
+
+    if (!confirm('确定要重新生成对话吗？这将使用选择的 ASR 模型重新转写音频，并运行对齐、校正和命名。')) {
+      return
+    }
+
+    setIsRegeneratingTranscript(true)
+    try {
+      await api.regenerateTranscript(selectedHistoryId, {
+        asr_model: selectedAsrModel,
+        llm_model: selectedLlmModel !== 'disabled' ? selectedLlmModel : undefined,
+        gender_model: selectedGenderModel || undefined,
+        enable_naming: enableNaming,
+        enable_correction: enableCorrection,
+      })
+      // 重新加载完整历史记录数据更新 store
+      const historyResult = await api.getHistoryItem(selectedHistoryId)
+      setResult(historyResult)
+    } catch (err: unknown) {
+      console.error('重新生成对话失败:', err)
+      const message = err instanceof Error ? err.message : '未知错误'
+      alert(`重新生成对话失败: ${message}`)
+    } finally {
+      setIsRegeneratingTranscript(false)
+    }
+  }, [selectedHistoryId, isRegeneratingTranscript, selectedAsrModel, selectedLlmModel, selectedGenderModel, enableNaming, enableCorrection, setResult])
 
   // 分割片段
   const handleSplitSegment = useCallback(async (splitPosition: number, newSpeaker?: string) => {
@@ -799,6 +851,15 @@ export function FilePage() {
                     title="重命名"
                   >
                     <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleRegenerateTranscript}
+                    disabled={isRegeneratingTranscript}
+                    className="flex items-center gap-1 px-2 py-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="重新生成对话（ASR重新转写+对齐+校正+命名）"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isRegeneratingTranscript ? 'animate-spin' : ''}`} />
+                    {isRegeneratingTranscript ? '生成中...' : '重新生成对话'}
                   </button>
                   <button
                     onClick={handleDeleteHistory}

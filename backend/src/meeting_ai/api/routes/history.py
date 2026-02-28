@@ -23,8 +23,10 @@ from meeting_ai.api.schemas import (
     JobStatus,
 )
 from meeting_ai.config import get_settings
+from meeting_ai.logger import get_logger
 
 router = APIRouter()
+logger = get_logger("routes.history")
 
 
 @router.get("/history", response_model=HistoryListResponse)
@@ -57,8 +59,8 @@ async def list_history(limit: int = 50, offset: int = 0):
             # 检查是否有总结
             has_summary = (d / "summary.md").exists()
 
-            # 获取创建时间
-            created_at = datetime.fromtimestamp(result_file.stat().st_mtime)
+            # 获取创建时间：用目录创建时间（不受 result.json 重写影响）
+            created_at = datetime.fromtimestamp(d.stat().st_ctime)
 
             items.append(HistoryItemResponse(
                 id=d.name,
@@ -539,7 +541,7 @@ async def regenerate_history_summary(history_id: str, request: dict | None = Non
         sid: SpeakerInfo(
             id=sid,
             display_name=info.get("display_name", sid),
-            gender=info.get("gender"),
+            gender=info.get("gender") or "unknown",
             total_duration=info.get("total_duration", 0),
             segment_count=info.get("segment_count", 0),
         )
@@ -571,6 +573,236 @@ async def regenerate_history_summary(history_id: str, request: dict | None = Non
         "status": "ok",
         "summary": summary_md,
     }
+
+
+@router.post("/history/{history_id}/regenerate")
+async def regenerate_history_transcript(history_id: str, request: dict | None = None):
+    """
+    重新生成历史记录的对话（完整 ASR 重新转写管线）
+
+    流程：说话人分离 → ASR 转写 → 对齐 → 校正 → 性别检测 + 命名
+    不含总结（总结已有独立重新生成按钮）。
+
+    请求体:
+      - asr_model (必填): ASR 模型名称
+      - llm_model: LLM 模型名称（校正/命名需要）
+      - gender_model: 性别检测模型
+      - enable_naming: 是否启用智能命名
+      - enable_correction: 是否启用错别字校正
+    """
+    import asyncio
+    from meeting_ai.services.llm import reset_llm
+    from meeting_ai.models import Segment, SpeakerInfo
+    from meeting_ai.config import get_settings
+
+    settings = get_settings()
+    body = request or {}
+
+    # 解析参数
+    asr_model = body.get("asr_model")
+    llm_model = body.get("llm_model")
+    enable_naming = body.get("enable_naming", True)
+    enable_correction = body.get("enable_correction", True)
+    gender_model = body.get("gender_model")
+
+    # 校验 ASR 模型（必填）
+    if not asr_model:
+        raise HTTPException(status_code=400, detail="请选择语音识别模型（asr_model 必填）")
+
+    # 校正严格需要 LLM；命名无 LLM 时退化为性别兜底（仍有用）
+    use_llm = llm_model and llm_model != "disabled"
+    if enable_correction and not use_llm:
+        raise HTTPException(status_code=400, detail="未选择 LLM 模型（错别字校正需要 LLM）")
+
+    # 配置 LLM
+    if use_llm:
+        settings.llm.enabled = True
+        llm_model_name = llm_model
+        if not llm_model_name.endswith(".gguf"):
+            llm_model_name = f"{llm_model_name}.gguf"
+        if not llm_model_name.startswith("llm/") and not llm_model_name.startswith("llm\\"):
+            llm_model_name = f"llm/{llm_model_name}"
+        settings.llm.model_path = Path(llm_model_name)
+        reset_llm()
+
+    # 加载现有数据（验证历史记录存在）
+    output_dir, data = _load_result(history_id)
+
+    # 查找 WAV 文件
+    # diarization 用原始音频（保留声纹特征）
+    wav_original = None
+    for fname in ["audio_16k.wav", "recording.wav"]:
+        candidate = output_dir / fname
+        if candidate.exists():
+            wav_original = candidate
+            break
+
+    if not wav_original:
+        raise HTTPException(status_code=400, detail="未找到原始音频文件（需要 audio_16k.wav 或 recording.wav）")
+
+    # ASR 用增强音频（如果有），否则用原始
+    wav_for_asr = output_dir / "audio_enhanced.wav"
+    if not wav_for_asr.exists():
+        wav_for_asr = wav_original
+
+    loop = asyncio.get_event_loop()
+
+    try:
+        # ── 1. 说话人分离 ──
+        logger.info(f"[regenerate] 说话人分离: {wav_original}")
+        from meeting_ai.services import get_diarization_service
+        diar_service = get_diarization_service("pyannote-3.1")
+        diar_result = await loop.run_in_executor(
+            None, diar_service.diarize, wav_original,
+        )
+
+        # ── 2. ASR 转写 ──
+        logger.info(f"[regenerate] ASR 转写: engine={asr_model}, audio={wav_for_asr}")
+        from meeting_ai.services import get_asr_engine
+        asr_engine = get_asr_engine(asr_model)
+        asr_result = await loop.run_in_executor(
+            None, asr_engine.transcribe, wav_for_asr,
+        )
+
+        # ── 3. 对齐 ──
+        logger.info("[regenerate] 对齐说话人...")
+        from meeting_ai.services.alignment import (
+            align_transcript_with_speakers,
+            fix_unknown_speakers,
+            merge_adjacent_segments,
+        )
+        aligned = await loop.run_in_executor(
+            None, align_transcript_with_speakers, asr_result, diar_result,
+        )
+        fixed = await loop.run_in_executor(
+            None, fix_unknown_speakers, aligned,
+        )
+        final_segments = await loop.run_in_executor(
+            None, lambda: merge_adjacent_segments(fixed, max_gap=0.3),
+        )
+
+        # ── 4. 错别字校正 ──
+        if enable_correction and use_llm:
+            logger.info("[regenerate] 错别字校正...")
+            try:
+                from meeting_ai.services.correction import correct_segments
+                final_segments = await loop.run_in_executor(
+                    None, correct_segments, final_segments,
+                )
+            except Exception as e:
+                logger.warning(f"错别字校正失败: {e}")
+
+        # ── 5. 性别检测 + 命名 ──
+        new_speakers: dict[str, SpeakerInfo | dict] = {}
+        gender_map = {}
+
+        # 5a. 性别检测（始终运行，作为命名兜底）
+        logger.info("[regenerate] 性别检测...")
+        try:
+            from meeting_ai.services.gender import detect_all_genders
+            gender_engine = gender_model or "f0"
+            gender_map = await loop.run_in_executor(
+                None, lambda: detect_all_genders(
+                    wav_original, final_segments, engine_name=gender_engine,
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"性别检测失败: {e}")
+
+        # 5b. 智能命名
+        if enable_naming:
+            logger.info("[regenerate] 智能命名...")
+            try:
+                from meeting_ai.services.naming import get_naming_service
+                naming_service = get_naming_service()
+                new_speakers = await loop.run_in_executor(
+                    None, naming_service.name_speakers, final_segments, gender_map,
+                )
+            except Exception as e:
+                logger.warning(f"智能命名失败: {e}")
+
+        # 5c. 性别兜底命名
+        if not new_speakers:
+            from meeting_ai.services.gender import Gender
+            speaker_ids = sorted(set(seg.speaker for seg in final_segments if seg.speaker))
+            gender_counters: dict[str, int] = {"male": 0, "female": 0, "unknown": 0}
+            for spk_id in speaker_ids:
+                total_dur = sum(seg.duration for seg in final_segments if seg.speaker == spk_id)
+                seg_count = sum(1 for seg in final_segments if seg.speaker == spk_id)
+                gender, _ = gender_map.get(spk_id, (Gender.UNKNOWN, 0.0))
+                gender_counters[gender.value] = gender_counters.get(gender.value, 0) + 1
+                count = gender_counters[gender.value]
+                if gender == Gender.MALE:
+                    display_name = f"男性{count:02d}"
+                elif gender == Gender.FEMALE:
+                    display_name = f"女性{count:02d}"
+                else:
+                    display_name = f"说话人{count:02d}"
+                new_speakers[spk_id] = SpeakerInfo(
+                    id=spk_id,
+                    display_name=display_name,
+                    gender=gender,
+                    total_duration=total_dur,
+                    segment_count=seg_count,
+                )
+
+        # ── 6. 保存结果 ──
+        # 转换 speakers 为 dict 格式
+        speakers_data = {}
+        for sid, info in new_speakers.items():
+            if isinstance(info, SpeakerInfo):
+                speakers_data[sid] = {
+                    "id": sid,
+                    "display_name": info.display_name,
+                    "gender": info.gender if isinstance(info.gender, str)
+                        else info.gender.value if hasattr(info.gender, "value")
+                        else str(info.gender),
+                    "total_duration": info.total_duration,
+                    "segment_count": info.segment_count,
+                }
+            else:
+                speakers_data[sid] = info
+
+        data["segments"] = [
+            {
+                "id": i,
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "speaker": seg.speaker,
+            }
+            for i, seg in enumerate(final_segments)
+        ]
+        data["speakers"] = speakers_data
+
+        # 保存（不动 summary）
+        _save_result(output_dir, data)
+
+        # 构建响应
+        resp_segments = [
+            {
+                "id": i,
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "speaker": seg.speaker,
+                "speaker_name": speakers_data.get(seg.speaker, {}).get("display_name", seg.speaker),
+            }
+            for i, seg in enumerate(final_segments)
+        ]
+
+        logger.info(f"[regenerate] 完成: {len(final_segments)} 段, {len(speakers_data)} 说话人")
+        return {
+            "status": "ok",
+            "segments": resp_segments,
+            "speakers": speakers_data,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[regenerate] 失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"重新生成对话失败: {e}")
 
 
 @router.post("/history/{history_id}/segments/merge")

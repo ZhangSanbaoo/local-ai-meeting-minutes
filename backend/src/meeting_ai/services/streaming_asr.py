@@ -62,6 +62,7 @@ class StreamingSession:
     # fsmn-vad 独立状态
     vad_cache: dict = field(default_factory=dict)
     is_speech: bool = False
+    vad_speech_start: float = -1.0  # VAD 检测到的语音起始时间 (秒)
     # 当前片段累积的字级时间戳 [(char, start, end), ...]
     current_char_timestamps: list = field(default_factory=list)
     # 前缀锁定（减少文字闪烁）
@@ -119,6 +120,248 @@ class StreamingASREngine(ABC):
     def unload(self) -> None:
         """卸载模型，释放 GPU 显存"""
         ...
+
+
+# ---------------------------------------------------------------------------
+# StreamingVADProcessor — 独立段级 VAD（段级/混合模式使用）
+# ---------------------------------------------------------------------------
+
+class StreamingVADProcessor:
+    """
+    独立的流式 VAD 处理器，用于段级/混合模式。
+
+    分段策略（业界标准 — Google Cloud Speech V2、AssemblyAI、Deepgram）：
+    - 主策略: fsmn-vad speech_end（静默 ≥ 500-800ms）→ 一句话结束
+    - 兜底: 连续说话 > MAX_SEGMENT_DURATION(8s) → 强制切段
+    - 过滤: 语音段 < MIN_SEGMENT_DURATION(0.3s) → 丢弃
+    """
+
+    MAX_SEGMENT_DURATION = 8.0   # 最大段时长（秒）
+    MIN_SEGMENT_DURATION = 0.3   # 最小段时长（秒）
+    SAMPLE_RATE = 16000
+
+    def __init__(self) -> None:
+        self._vad_model: Any | None = None
+        self._vad_cache: dict = {}
+        self._is_speaking: bool = False
+        self._speech_start: float = 0.0
+        self._audio_buffer: list[np.ndarray] = []
+        self._total_samples: int = 0
+        self._chunk_appended: bool = False  # 当前 chunk 是否已加入 buffer
+        self._settings = get_settings().streaming
+
+    def load(self) -> None:
+        """加载 fsmn-vad 模型"""
+        if self._vad_model is not None:
+            return
+
+        from funasr import AutoModel
+
+        settings = self._settings
+        device = settings.device
+        if device == "auto":
+            import torch
+            device = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+        models_dir = get_settings().paths.models_dir
+        vad_dir = settings.funasr_vad_dir
+        if not vad_dir.is_absolute():
+            rel = str(vad_dir).replace("\\", "/")
+            if rel.startswith("models/"):
+                rel = rel[len("models/"):]
+            vad_dir = (models_dir / rel).resolve()
+
+        if not vad_dir.exists():
+            raise FileNotFoundError(f"VAD 模型不存在: {vad_dir}")
+
+        self._vad_model = AutoModel(
+            model=str(vad_dir),
+            device=device,
+            disable_update=True,
+        )
+        logger.info(f"StreamingVADProcessor: fsmn-vad 加载完成 ({vad_dir})")
+
+    def is_loaded(self) -> bool:
+        return self._vad_model is not None
+
+    def unload(self) -> None:
+        """释放模型"""
+        if self._vad_model is not None:
+            del self._vad_model
+            self._vad_model = None
+        self._vad_cache = {}
+        self._audio_buffer = []
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        logger.info("StreamingVADProcessor: VAD 模型已卸载")
+
+    # 边界 padding：在 speech_start 前和 speech_end 后各保留一小段，
+    # 避免 ASR 丢掉边界处的字。30ms = 480 samples @ 16kHz
+    BOUNDARY_PAD_SAMPLES = 480
+
+    def feed_chunk(self, pcm_int16: bytes) -> list[dict]:
+        """
+        喂入 PCM 音频块，返回完成的语音段列表。
+
+        Args:
+            pcm_int16: PCM Int16 LE 单声道 16kHz 原始音频 bytes
+
+        Returns:
+            [{"start": float, "end": float, "audio": np.ndarray(int16)}, ...]
+            空列表表示无完成段
+        """
+        if self._vad_model is None:
+            raise RuntimeError("VAD 未加载，请先调用 load()")
+
+        audio_array = np.frombuffer(pcm_int16, dtype=np.int16)
+        chunk_samples = len(audio_array)
+        chunk_start_sample = self._total_samples
+        chunk_start_time = chunk_start_sample / self.SAMPLE_RATE
+        self._total_samples += chunk_samples
+        chunk_end_time = self._total_samples / self.SAMPLE_RATE
+
+        completed: list[dict] = []
+
+        # 1. 调用 fsmn-vad 检测
+        try:
+            vad_result = self._vad_model.generate(
+                input=audio_array,
+                cache=self._vad_cache,
+                is_final=False,
+                chunk_size=200,
+                max_end_silence_time=self._settings.funasr_vad_silence_ms,
+            )
+            # 解析 VAD 输出: [{"value": [[start_ms, end_ms], ...]}]
+            # fsmn-vad 流式模式下时间戳是绝对毫秒（从首个 chunk 起算）
+            segments = vad_result[0].get("value", []) if vad_result else []
+        except Exception as e:
+            logger.debug(f"VAD 推理错误: {e}")
+            segments = []
+
+        # 2. 解析 VAD 事件，精确切割音频边界
+        for seg in segments:
+            if len(seg) < 2:
+                continue
+
+            # speech_start: seg[0] != -1
+            if seg[0] != -1 and not self._is_speaking:
+                self._is_speaking = True
+                self._speech_start = seg[0] / 1000.0
+                # 精确切割：只保留 speech_start 之后的样本（含 padding）
+                speech_start_sample = int(self._speech_start * self.SAMPLE_RATE)
+                cut_sample = max(0, speech_start_sample - self.BOUNDARY_PAD_SAMPLES)
+                rel = cut_sample - chunk_start_sample
+                if rel > 0 and rel < chunk_samples:
+                    self._audio_buffer = [audio_array[rel:].copy()]
+                else:
+                    # speech_start 在 chunk 开头或之前，保留整个 chunk
+                    self._audio_buffer = [audio_array.copy()]
+                self._chunk_appended = True  # 标记当前 chunk 已加入 buffer
+
+            # speech_end: seg[1] != -1
+            if seg[1] != -1 and self._is_speaking:
+                speech_end_time = seg[1] / 1000.0
+                duration = speech_end_time - self._speech_start
+                if duration >= self.MIN_SEGMENT_DURATION:
+                    # 精确切割：只保留到 speech_end 的样本（含 padding）
+                    speech_end_sample = int(speech_end_time * self.SAMPLE_RATE)
+                    cut_sample = min(
+                        self._total_samples,
+                        speech_end_sample + self.BOUNDARY_PAD_SAMPLES,
+                    )
+                    rel = cut_sample - chunk_start_sample
+                    if not self._chunk_appended:
+                        # 当前 chunk 还没加入（speech_start 和 end 在同一 chunk）
+                        if 0 < rel < chunk_samples:
+                            self._audio_buffer.append(audio_array[:rel].copy())
+                        else:
+                            self._audio_buffer.append(audio_array.copy())
+                    else:
+                        # 当前 chunk 已在 speech_start 时加入，需替换尾部
+                        # 只有当 end 在 chunk 中间时才裁剪
+                        if 0 < rel < chunk_samples and self._audio_buffer:
+                            # 替换最后一块为裁剪版
+                            last = self._audio_buffer[-1]
+                            # last 可能是从 speech_start 裁剪过的，长度与整 chunk 不同
+                            # 用 rel 相对于 chunk 头部计算需要保留多少
+                            keep = min(len(last), rel)
+                            self._audio_buffer[-1] = last[:keep]
+
+                    audio = np.concatenate(self._audio_buffer)
+                    completed.append({
+                        "start": self._speech_start,
+                        "end": speech_end_time,
+                        "audio": audio,
+                    })
+                    self._audio_buffer = []
+                else:
+                    logger.debug(
+                        f"VAD 丢弃短段: {duration:.2f}s < {self.MIN_SEGMENT_DURATION}s"
+                    )
+                    self._audio_buffer = []
+                self._is_speaking = False
+                self._chunk_appended = False
+
+        # 3. 累积音频（speech 正在进行中，且当前 chunk 尚未加入 buffer）
+        if self._is_speaking and not self._chunk_appended:
+            self._audio_buffer.append(audio_array.copy())
+        # 重置标记供下个 chunk 使用
+        self._chunk_appended = False
+
+        # 4. 最大时长兜底
+        if self._is_speaking:
+            duration = chunk_end_time - self._speech_start
+            if duration >= self.MAX_SEGMENT_DURATION:
+                audio = np.concatenate(self._audio_buffer)
+                completed.append({
+                    "start": self._speech_start,
+                    "end": chunk_end_time,
+                    "audio": audio,
+                })
+                logger.debug(
+                    f"VAD 强制切段: {duration:.1f}s >= {self.MAX_SEGMENT_DURATION}s"
+                )
+                self._speech_start = chunk_end_time
+                self._audio_buffer = []
+
+        return completed
+
+    def flush(self) -> list[dict]:
+        """录音结束时刷出缓冲区中剩余的语音段"""
+        if not self._is_speaking or not self._audio_buffer:
+            return []
+
+        audio = np.concatenate(self._audio_buffer)
+        end_time = self._total_samples / self.SAMPLE_RATE
+        duration = end_time - self._speech_start
+
+        self._is_speaking = False
+        self._audio_buffer = []
+
+        if duration >= self.MIN_SEGMENT_DURATION:
+            return [{"start": self._speech_start, "end": end_time, "audio": audio}]
+        return []
+
+    def reset(self) -> None:
+        """重置状态（新录音前调用）"""
+        self._vad_cache = {}
+        self._is_speaking = False
+        self._speech_start = 0.0
+        self._audio_buffer = []
+        self._total_samples = 0
+        self._chunk_appended = False
+
+    @property
+    def is_speaking(self) -> bool:
+        return self._is_speaking
+
+    @property
+    def current_time(self) -> float:
+        return self._total_samples / self.SAMPLE_RATE
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +533,14 @@ class FunASREngine(StreamingASREngine):
 
         if new_text:
             if not session.current_text:
-                session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
+                # 优先级: VAD 语音起始 > 首个字级时间戳 > chunk 起始时间
+                if session.vad_speech_start >= 0:
+                    session.current_segment_start = session.vad_speech_start
+                elif new_char_ts:
+                    session.current_segment_start = max(0.0, new_char_ts[0].start)
+                else:
+                    session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
+                session.current_segment_start = max(0.0, session.current_segment_start)
             session.current_text += new_text
             session.last_text_time = chunk_end_time
             if new_char_ts:
@@ -315,6 +565,7 @@ class FunASREngine(StreamingASREngine):
                     if len(seg) >= 2:
                         if seg[0] != -1:
                             session.is_speech = True
+                            session.vad_speech_start = seg[0] / 1000.0
                         if seg[1] != -1:
                             session.is_speech = False
                             vad_speech_end = True
@@ -429,6 +680,7 @@ class FunASREngine(StreamingASREngine):
         session.current_text = ""
         session.last_text_time = 0.0
         session.current_char_timestamps = []
+        session.vad_speech_start = -1.0
         session.locked_text = ""
         session.pending_text = ""
         session.pending_stable_count = 0
@@ -744,7 +996,11 @@ class SherpaOnnxEngine(StreamingASREngine):
         elif text:
             # 部分识别：更新当前片段（同一 segment_id）
             if not session.current_text:
-                session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
+                # 优先用首个字级时间戳，回退到 chunk 起始时间
+                if char_ts:
+                    session.current_segment_start = max(0.0, char_ts[0].start)
+                else:
+                    session.current_segment_start = chunk_end_time - (chunk_samples / sample_rate)
             session.current_text = text  # 记录用于跟踪
             # P2: 前缀锁定
             display_text = self._apply_prefix_locking(session, text)
@@ -795,6 +1051,7 @@ class SherpaOnnxEngine(StreamingASREngine):
     def _reset_session_segment(session: StreamingSession) -> None:
         """重置片段累积状态"""
         session.current_text = ""
+        session.vad_speech_start = -1.0
         session.locked_text = ""
         session.pending_text = ""
         session.pending_stable_count = 0

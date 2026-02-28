@@ -125,8 +125,14 @@ def _parse_summary_response(response: str) -> dict:
         line_stripped = line.strip()
         if not line_stripped:
             continue
-        
-        # 检测章节标题
+
+        # 检测章节标题 — 只有以 # 或 ** 开头的行才可能是标题
+        # 避免内容行中包含关键词被误判为新章节
+        is_header_line = (
+            line_stripped.startswith("#")
+            or line_stripped.startswith("**")
+            or line_stripped.startswith("##")
+        )
         lower_line = line_stripped.lower().replace(" ", "").replace("：", ":").replace("*", "").replace("#", "")
         
         new_section = None
@@ -147,7 +153,7 @@ def _parse_summary_response(response: str) -> dict:
         elif "要点" in lower_line or "keypoint" in lower_line or "主要内容" in lower_line:
             new_section = "key_points"
         
-        if new_section:
+        if new_section and is_header_line:
             save_current_section()
             current_section = new_section
             current_content = []
@@ -169,7 +175,20 @@ def _parse_summary_response(response: str) -> dict:
     # 合并 key_data 到 key_points（如果有的话）
     if result["key_data"]:
         result["key_points"].extend([f"📊 {d}" for d in result["key_data"]])
-    
+
+    # 去重（保持顺序）
+    def _deduplicate(items: list[str]) -> list[str]:
+        seen = set()
+        unique = []
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                unique.append(item)
+        return unique
+
+    for key in ["key_points", "action_items", "decisions", "follow_ups", "key_data"]:
+        result[key] = _deduplicate(result[key])
+
     return result
 
 

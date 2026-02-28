@@ -2,6 +2,7 @@ import axios from 'axios'
 import type {
   HistoryItem,
   JobResponse,
+  LLMSettings,
   ModelsResponse,
   ProcessResult,
   StreamingEnginesResponse,
@@ -66,6 +67,16 @@ export async function deleteLlmModel(modelName: string): Promise<void> {
 export async function getSystemInfo(): Promise<SystemInfo> {
   const { data } = await client.get<SystemInfo>('/system')
   return data
+}
+
+// LLM 参数设置
+export async function getLLMSettings(): Promise<LLMSettings> {
+  const { data } = await client.get<LLMSettings>('/settings/llm')
+  return data
+}
+
+export async function updateLLMSettings(n_ctx: number): Promise<void> {
+  await client.put('/settings/llm', { n_ctx })
 }
 
 // 流式 ASR 引擎
@@ -329,6 +340,22 @@ export async function regenerateSummary(
     llm_model: llmModel,
   }, {
     timeout: 600000, // LLM 生成长会议总结可能需要数分钟
+  })
+  return data
+}
+
+export async function regenerateTranscript(
+  historyId: string,
+  options: {
+    asr_model: string
+    llm_model?: string
+    gender_model?: string
+    enable_naming?: boolean
+    enable_correction?: boolean
+  }
+): Promise<{ status: string; segments: Array<{ id: number; start: number; end: number; text: string; speaker: string; speaker_name: string }>; speakers: Record<string, { id: string; display_name: string; gender: string; total_duration: number; segment_count: number }> }> {
+  const { data } = await client.post(`/history/${historyId}/regenerate`, options, {
+    timeout: 600000, // ASR + 校正 + 命名可能需要数分钟
   })
   return data
 }

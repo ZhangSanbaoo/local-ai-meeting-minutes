@@ -6,6 +6,7 @@ import type {
   ProcessResult,
   RealtimeSegment,
   RealtimeState,
+  RecordingMode,
   Segment,
   Speaker,
 } from '../types'
@@ -65,6 +66,8 @@ interface AppState {
   realtimeSessionId: string | null
   postProcessProgress: number
   postProcessStep: string
+  recordingMode: RecordingMode
+  sentenceAsrModel: string | null
 
   // Actions
   setModels: (asr: ModelInfo[], llm: ModelInfo[], gender?: ModelInfo[]) => void
@@ -107,6 +110,8 @@ interface AppState {
   setRealtimeState: (state: RealtimeState) => void
   setRealtimeSessionId: (id: string | null) => void
   setPostProcessProgress: (progress: number, step: string) => void
+  setRecordingMode: (mode: RecordingMode) => void
+  setSentenceAsrModel: (model: string | null) => void
   setActiveTab: (tab: TabType) => void
   reset: () => void
 }
@@ -116,12 +121,12 @@ const initialState = {
   asrModels: [],
   llmModels: [],
   genderModels: [],
-  selectedAsrModel: 'medium',
+  selectedAsrModel: '',
   selectedLlmModel: 'disabled',
   selectedGenderModel: 'f0',
-  enableNaming: true,
-  enableCorrection: true,
-  enableSummary: true,
+  enableNaming: false,
+  enableCorrection: false,
+  enableSummary: false,
   enhanceMode: 'none' as EnhanceMode,
   currentJobId: null,
   isProcessing: false,
@@ -149,6 +154,8 @@ const initialState = {
   realtimeSessionId: null,
   postProcessProgress: 0,
   postProcessStep: '',
+  recordingMode: 'streaming' as RecordingMode,
+  sentenceAsrModel: null as string | null,
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -310,6 +317,12 @@ export const useAppStore = create<AppState>((set) => ({
 
   setPostProcessProgress: (postProcessProgress, postProcessStep) =>
     set({ postProcessProgress, postProcessStep }),
+
+  setRecordingMode: (recordingMode) =>
+    set({ recordingMode }),
+
+  setSentenceAsrModel: (sentenceAsrModel) =>
+    set({ sentenceAsrModel }),
 
   setActiveTab: (tab) =>
     set({ activeTab: tab }),

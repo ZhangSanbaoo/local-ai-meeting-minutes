@@ -8,6 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from meeting_ai.api.schemas import (
+    LLMSettingsResponse,
+    LLMSettingsUpdate,
     ModelInfoResponse,
     ModelsListResponse,
     StreamingEngineResponse,
@@ -17,6 +19,32 @@ from meeting_ai.api.schemas import (
 from meeting_ai.config import get_settings
 from meeting_ai.services.asr import detect_engine_type
 from meeting_ai.services.streaming_asr import list_available_engines
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _update_env_value(key: str, value: str) -> None:
+    """更新 backend/.env 文件中的某个配置项（存在则替换，不存在则追加）"""
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.exists():
+        return
+
+    lines = env_path.read_text(encoding="utf-8").splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"# {key}="):
+            lines[i] = f"{key}={value}"
+            found = True
+            break
+    if not found:
+        lines.append(f"{key}={value}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(f".env 已更新: {key}={value}")
+
 
 # 已知性别检测模型的元数据
 GENDER_MODEL_META: dict[str, dict[str, str]] = {
@@ -44,6 +72,31 @@ ASR_MODEL_META: dict[str, dict[str, str]] = {
 
 
 router = APIRouter()
+
+
+def _get_gpu_vram_gb() -> float | None:
+    """获取 GPU 显存 (GB)，无 GPU 返回 None"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            return round(props.total_memory / (1024 ** 3), 1)
+    except ImportError:
+        pass
+    return None
+
+
+def _recommend_n_ctx(vram_gb: float | None) -> int:
+    """根据 GPU 显存推荐 n_ctx（Qwen2.5-7B Q4_K_M 基准）"""
+    if vram_gb is None:
+        return 4096
+    # 模型本体 ≈ 4.5GB，留 ~1.5GB 余量 → 6GB 基线
+    # 每 1024 n_ctx ≈ 0.15GB
+    available = vram_gb - 6
+    if available <= 0:
+        return 2048
+    recommended = int(available / 0.15) * 1024
+    return max(2048, min(recommended, 16384))
 
 
 @router.get("/models", response_model=ModelsListResponse)
@@ -467,9 +520,38 @@ async def get_system_info():
         cuda_available=cuda_available,
         cuda_version=cuda_version,
         gpu_name=gpu_name,
+        gpu_vram_gb=_get_gpu_vram_gb(),
         models_dir=str(settings.paths.models_dir),
         output_dir=str(settings.paths.output_dir),
     )
+
+
+@router.get("/settings/llm", response_model=LLMSettingsResponse)
+async def get_llm_settings():
+    """获取 LLM 参数设置"""
+    settings = get_settings()
+    vram = _get_gpu_vram_gb()
+    return LLMSettingsResponse(
+        n_ctx=settings.llm.n_ctx,
+        gpu_vram_gb=vram,
+        recommended_n_ctx=_recommend_n_ctx(vram),
+    )
+
+
+@router.put("/settings/llm")
+async def update_llm_settings(body: LLMSettingsUpdate):
+    """更新 LLM 参数（运行时生效 + 持久化到 .env）"""
+    settings = get_settings()
+    old_n_ctx = settings.llm.n_ctx
+    if body.n_ctx != old_n_ctx:
+        settings.llm.n_ctx = body.n_ctx
+        from meeting_ai.services.llm import reset_llm
+        reset_llm()
+
+        # 持久化到 .env
+        _update_env_value("MEETING_AI_LLM__N_CTX", str(body.n_ctx))
+
+    return {"status": "ok", "n_ctx": settings.llm.n_ctx}
 
 
 @router.get("/streaming-engines", response_model=StreamingEnginesListResponse)

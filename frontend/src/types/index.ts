@@ -2,7 +2,11 @@
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
+export type RecordingMode = 'streaming' | 'segment' | 'hybrid'
+
 export type EnhanceMode = 'none' | 'denoise' | 'enhance' | 'vocal' | 'full'
+
+export type HybridUpgradeMode = 'segment' | 'full'
 
 export interface Segment {
   id: number
@@ -72,8 +76,15 @@ export interface SystemInfo {
   cuda_available: boolean
   cuda_version?: string
   gpu_name?: string
+  gpu_vram_gb?: number
   models_dir: string
   output_dir: string
+}
+
+export interface LLMSettings {
+  n_ctx: number
+  gpu_vram_gb: number | null
+  recommended_n_ctx: number
 }
 
 // 处理选项
@@ -111,6 +122,8 @@ export interface WSPartialMessage extends WSMessage {
   segment_id: number
   start_time: number
   end_time: number
+  is_placeholder?: boolean  // 段级模式：占位提示
+  is_upgrade?: boolean       // 混合模式：高精度升级替换
 }
 
 export interface WSPostProgressMessage extends WSMessage {
@@ -145,6 +158,8 @@ export interface RealtimeSegment {
   isFinal: boolean
   startTime: number
   endTime: number
+  isPlaceholder?: boolean  // 段级模式：灰色占位
+  isUpgraded?: boolean      // 混合模式：已被升级（触发绿色闪烁）
 }
 
 export type RealtimeState =

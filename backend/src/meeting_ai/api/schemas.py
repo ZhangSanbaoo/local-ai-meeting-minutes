@@ -187,8 +187,21 @@ class SystemInfoResponse(BaseModel):
     cuda_available: bool
     cuda_version: Optional[str] = None
     gpu_name: Optional[str] = None
+    gpu_vram_gb: Optional[float] = None
     models_dir: str
     output_dir: str
+
+
+class LLMSettingsResponse(BaseModel):
+    """LLM 参数响应"""
+    n_ctx: int
+    gpu_vram_gb: Optional[float] = None
+    recommended_n_ctx: int
+
+
+class LLMSettingsUpdate(BaseModel):
+    """LLM 参数更新请求"""
+    n_ctx: int = Field(ge=1024, le=32768)
 
 
 # ============================================================================

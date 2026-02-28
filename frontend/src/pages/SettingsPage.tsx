@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Trash2, RefreshCw, HardDrive, Cpu } from 'lucide-react'
+import { Upload, Trash2, RefreshCw, HardDrive, Cpu, Info } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAppStore } from '../stores/appStore'
 import * as api from '../api/client'
-import type { SystemInfo } from '../types'
+import type { LLMSettings, SystemInfo } from '../types'
 
 export function SettingsPage() {
   const { asrModels, llmModels, genderModels } = useAppStore()
@@ -15,10 +15,65 @@ export function SettingsPage() {
   const llmInputRef = useRef<HTMLInputElement>(null)
   const genderInputRef = useRef<HTMLInputElement>(null)
 
+  // LLM 参数设置
+  const [llmSettings, setLlmSettings] = useState<LLMSettings | null>(null)
+  const [nCtxValue, setNCtxValue] = useState(4096)
+  const [nCtxInput, setNCtxInput] = useState('4096')
+  const [llmSaving, setLlmSaving] = useState(false)
+  const [llmSaveMsg, setLlmSaveMsg] = useState<string | null>(null)
+
   // 加载系统信息
   useEffect(() => {
     api.getSystemInfo().then(setSystemInfo).catch(console.error)
   }, [])
+
+  // 加载 LLM 参数
+  useEffect(() => {
+    api.getLLMSettings().then((s) => {
+      setLlmSettings(s)
+      setNCtxValue(s.n_ctx)
+      setNCtxInput(String(s.n_ctx))
+    }).catch(console.error)
+  }, [])
+
+  const handleNCtxSlider = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = Number(e.target.value)
+    setNCtxValue(v)
+    setNCtxInput(String(v))
+  }, [])
+
+  const handleNCtxInputBlur = useCallback(() => {
+    let v = parseInt(nCtxInput, 10)
+    if (isNaN(v)) v = 4096
+    v = Math.max(1024, Math.min(32768, Math.round(v / 1024) * 1024))
+    setNCtxValue(v)
+    setNCtxInput(String(v))
+  }, [nCtxInput])
+
+  const handleSaveLlmSettings = useCallback(async () => {
+    setLlmSaving(true)
+    setLlmSaveMsg(null)
+    try {
+      await api.updateLLMSettings(nCtxValue)
+      setLlmSaveMsg('已保存')
+      if (llmSettings) {
+        setLlmSettings({ ...llmSettings, n_ctx: nCtxValue })
+      }
+      setTimeout(() => setLlmSaveMsg(null), 2000)
+    } catch (err) {
+      console.error('保存失败:', err)
+      setLlmSaveMsg('保存失败')
+      setTimeout(() => setLlmSaveMsg(null), 3000)
+    } finally {
+      setLlmSaving(false)
+    }
+  }, [nCtxValue, llmSettings])
+
+  const handleApplyRecommended = useCallback(() => {
+    if (!llmSettings) return
+    setNCtxValue(llmSettings.recommended_n_ctx)
+    setNCtxInput(String(llmSettings.recommended_n_ctx))
+  }, [llmSettings])
 
   // 刷新模型列表
   const refreshModels = useCallback(async () => {
@@ -227,7 +282,10 @@ export function SettingsPage() {
               {systemInfo.gpu_name && (
                 <div className="col-span-2">
                   <span className="text-gray-500">GPU:</span>{' '}
-                  <span className="font-medium">{systemInfo.gpu_name}</span>
+                  <span className="font-medium">
+                    {systemInfo.gpu_name}
+                    {systemInfo.gpu_vram_gb != null && ` (${systemInfo.gpu_vram_gb}GB)`}
+                  </span>
                 </div>
               )}
               <div className="col-span-2">
@@ -417,6 +475,97 @@ export function SettingsPage() {
           )}
         </section>
 
+
+        {/* LLM 参数设置 */}
+        <section className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+            <Cpu className="w-5 h-5" />
+            LLM 参数
+          </h2>
+
+          {llmSettings ? (
+            <div className="space-y-4">
+              {/* 滑块 */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-700">上下文长度 (n_ctx)</label>
+                  <input
+                    type="text"
+                    value={nCtxInput}
+                    onChange={(e) => setNCtxInput(e.target.value)}
+                    onBlur={handleNCtxInputBlur}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleNCtxInputBlur() }}
+                    className="w-20 text-right text-sm font-mono border border-gray-300 rounded px-2 py-1"
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={1024}
+                  max={32768}
+                  step={1024}
+                  value={nCtxValue}
+                  onChange={handleNCtxSlider}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>1024</span>
+                  <span>32768</span>
+                </div>
+              </div>
+
+              {/* 推荐值 */}
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-gray-500">
+                  推荐:{' '}
+                  <span className="font-medium text-green-600">{llmSettings.recommended_n_ctx}</span>
+                  {llmSettings.gpu_vram_gb != null && (
+                    <span className="text-gray-400 ml-1">
+                      (基于 {llmSettings.gpu_vram_gb}GB 显存)
+                    </span>
+                  )}
+                </span>
+                {nCtxValue !== llmSettings.recommended_n_ctx && (
+                  <button
+                    onClick={handleApplyRecommended}
+                    className="text-xs px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100"
+                  >
+                    应用推荐
+                  </button>
+                )}
+              </div>
+
+              {/* 提示 */}
+              <div className="flex items-start gap-2 text-xs text-gray-500 bg-gray-50 rounded p-3">
+                <Info className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" />
+                <div>
+                  <p>较大值可处理更长会议，但占用更多显存。</p>
+                  <p>修改后在下次使用 LLM 时生效。重启后端将恢复 .env 默认值。</p>
+                </div>
+              </div>
+
+              {/* 保存按钮 */}
+              <div className="flex items-center justify-end gap-3">
+                {llmSaveMsg && (
+                  <span className={clsx(
+                    'text-sm',
+                    llmSaveMsg === '已保存' ? 'text-green-600' : 'text-red-600'
+                  )}>
+                    {llmSaveMsg}
+                  </span>
+                )}
+                <button
+                  onClick={handleSaveLlmSettings}
+                  disabled={llmSaving || nCtxValue === llmSettings.n_ctx}
+                  className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                >
+                  {llmSaving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-gray-400">加载中...</div>
+          )}
+        </section>
 
         {/* 性别检测模型管理 */}
         <section className="bg-white rounded-lg shadow p-6">

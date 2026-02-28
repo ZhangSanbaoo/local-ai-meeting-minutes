@@ -549,6 +549,8 @@ class FasterWhisperEngine(ASREngine):
         self,
         audio_path: Path | str,
         language: str | None = None,
+        *,
+        vad_filter: bool | None = None,
     ) -> TranscriptResult:
         if self._model is None:
             raise RuntimeError("模型未加载，请先调用 load()")
@@ -559,15 +561,16 @@ class FasterWhisperEngine(ASREngine):
 
         settings = get_settings().asr
         lang = language or settings.language or "zh"
+        use_vad = vad_filter if vad_filter is not None else settings.vad_filter
 
-        logger.info(f"[faster-whisper] 开始转写: {audio_path.name}")
+        logger.info(f"[faster-whisper] 开始转写: {audio_path.name} (vad_filter={use_vad})")
 
         # 强制开启 word_timestamps 以支持字级对齐
         segments_iter, info = self._model.transcribe(
             str(audio_path),
             language=lang,
             beam_size=settings.beam_size,
-            vad_filter=settings.vad_filter,
+            vad_filter=use_vad,
             word_timestamps=True,
         )
 
@@ -676,6 +679,8 @@ class FunASRFileEngine(ASREngine):
         self,
         audio_path: Path | str,
         language: str | None = None,
+        *,
+        skip_vad: bool = False,
     ) -> TranscriptResult:
         if self._model is None:
             raise RuntimeError("模型未加载，请先调用 load()")
@@ -691,13 +696,17 @@ class FunASRFileEngine(ASREngine):
         engine_name = "SenseVoice" if self._is_sensevoice else "Paraformer"
         logger.info(f"[{engine_name}] 开始转写: {audio_path.name} ({duration:.1f}s)")
 
-        # 优先尝试 VAD 预分段：先切再逐段转写，获得精确时间戳
-        result = self._transcribe_with_vad(audio_path, duration, language)
-
-        if result is None:
-            # VAD 不可用，回退到整文件转写
-            logger.info(f"[{engine_name}] VAD 不可用，使用整文件转写")
+        if skip_vad:
+            # 外部已做 VAD 切段，直接整文件转写（避免二次 VAD 丢字）
             result = self._transcribe_whole_file(audio_path, duration, language)
+        else:
+            # 优先尝试 VAD 预分段：先切再逐段转写，获得精确时间戳
+            result = self._transcribe_with_vad(audio_path, duration, language)
+
+            if result is None:
+                # VAD 不可用，回退到整文件转写
+                logger.info(f"[{engine_name}] VAD 不可用，使用整文件转写")
+                result = self._transcribe_whole_file(audio_path, duration, language)
 
         logger.info(f"[{engine_name}] 转写完成: 片段数={len(result.segments)}")
         return result
@@ -1096,6 +1105,8 @@ class FireRedASREngine(ASREngine):
         self,
         audio_path: Path | str,
         language: str | None = None,
+        *,
+        skip_vad: bool = False,
     ) -> TranscriptResult:
         if self._model is None:
             raise RuntimeError("模型未加载，请先调用 load()")
@@ -1120,12 +1131,16 @@ class FireRedASREngine(ASREngine):
             "eos_penalty": 1.0,
         }
 
-        # 优先用 VAD 分段，回退到固定 55s 分块
-        result = self._transcribe_with_vad(audio_path, duration, decode_params)
+        if skip_vad:
+            result = None  # 跳过 VAD，直接整文件转写
+        else:
+            # 优先用 VAD 分段，回退到固定 55s 分块
+            result = self._transcribe_with_vad(audio_path, duration, decode_params)
 
         if result is None:
-            # VAD 不可用，使用整文件/分块转写 + 生成线性插值时间戳
-            logger.info("[FireRedASR] VAD 不可用，使用整文件转写")
+            # VAD 不可用或被跳过，使用整文件/分块转写 + 生成线性插值时间戳
+            if not skip_vad:
+                logger.info("[FireRedASR] VAD 不可用，使用整文件转写")
             if duration > 60:
                 segments = self._transcribe_chunked(audio_path, duration, decode_params)
             else:
@@ -1456,6 +1471,11 @@ def get_asr_engine(model_name: str | None = None) -> ASREngine:
     if _engine is not None and _engine_model != model_name:
         logger.info(f"ASR 引擎切换: {_engine_model} → {model_name}")
         _engine.unload()
+        _engine = None
+
+    # 引擎被外部 unload 后 _model 为 None，需重新加载
+    if _engine is not None and getattr(_engine, '_model', None) is None:
+        logger.info(f"ASR 引擎已卸载，重新加载: {model_name}")
         _engine = None
 
     if _engine is None:

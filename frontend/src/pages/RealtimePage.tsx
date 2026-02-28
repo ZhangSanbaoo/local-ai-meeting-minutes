@@ -13,7 +13,7 @@ import {
 import { useRecordingTimer } from '../hooks/useRecordingTimer'
 import { ProgressBar } from '../components/ProgressBar'
 import { getStreamingEngines, getModels, getAudioDevices } from '../api/client'
-import type { ModelInfo, RealtimeSegment, StreamingEngine } from '../types'
+import type { ModelInfo, RecordingMode, RealtimeSegment, StreamingEngine, HybridUpgradeMode } from '../types'
 
 export function RealtimePage() {
   // ── Local state ──
@@ -42,6 +42,22 @@ export function RealtimePage() {
   const [genderModels, setGenderModels] = useState<ModelInfo[]>([])
   const [selectedGenderModel, setSelectedGenderModel] = useState('f0')
 
+  // Recording mode
+  const [recordingMode, setRecordingMode] = useState<RecordingMode>('streaming')
+
+  // Hybrid upgrade granularity
+  const [hybridUpgrade, setHybridUpgrade] = useState<HybridUpgradeMode>('segment')
+
+  // File ASR models (for segment/hybrid modes)
+  const [fileAsrModels, setFileAsrModels] = useState<ModelInfo[]>([])
+  const [selectedFileAsr, setSelectedFileAsr] = useState('')
+
+  // Realtime denoise
+  const [enableDenoise, setEnableDenoise] = useState(false)
+
+  // Upgrade animation tracking
+  const [upgradedSegmentIds, setUpgradedSegmentIds] = useState<Set<number>>(new Set())
+
   // ── Load available engines, models, mic devices ──
   useEffect(() => {
     getStreamingEngines()
@@ -54,12 +70,17 @@ export function RealtimePage() {
     getModels()
       .then((res) => {
         setLlmModels(res.llm_models)
-        const defaultLlm = res.llm_models.find((m) => m.name !== 'disabled')
-        setSelectedLlm(defaultLlm?.name || 'disabled')
+        setSelectedLlm('disabled')
 
         setGenderModels(res.gender_models)
         if (res.gender_models.length > 0) {
           setSelectedGenderModel(res.gender_models[0].name)
+        }
+
+        // File ASR models for segment/hybrid modes
+        setFileAsrModels(res.asr_models)
+        if (res.asr_models.length > 0) {
+          setSelectedFileAsr(res.asr_models[0].name)
         }
       })
       .catch((err) => console.error('Failed to load models:', err))
@@ -123,6 +144,8 @@ export function RealtimePage() {
           isFinal: seg.isFinal,
           startTime: seg.startTime,
           endTime: seg.endTime,
+          isPlaceholder: seg.isPlaceholder,
+          isUpgraded: seg.isUpgrade,
         }
 
         const existing = useAppStore
@@ -133,6 +156,18 @@ export function RealtimePage() {
           updateRealtimeSegment(realtimeSeg)
         } else {
           addRealtimeSegment(realtimeSeg)
+        }
+
+        // 混合模式升级动画
+        if (seg.isUpgrade) {
+          setUpgradedSegmentIds((prev) => new Set(prev).add(seg.segmentId))
+          setTimeout(() => {
+            setUpgradedSegmentIds((prev) => {
+              const next = new Set(prev)
+              next.delete(seg.segmentId)
+              return next
+            })
+          }, 800)
         }
       },
       [addRealtimeSegment, updateRealtimeSegment]
@@ -216,6 +251,19 @@ export function RealtimePage() {
 
   // ── Load / Unload models ──
   const handleLoadModels = useCallback(() => {
+    const doLoad = () => {
+      if (recordingMode === 'segment') {
+        ws.loadModels(undefined, { mode: 'segment', sentenceAsrModel: selectedFileAsr || undefined })
+      } else if (recordingMode === 'hybrid') {
+        ws.loadModels(selectedEngine || undefined, {
+          mode: 'hybrid',
+          sentenceAsrModel: selectedFileAsr || undefined,
+          hybridUpgrade,
+        })
+      } else {
+        ws.loadModels(selectedEngine || undefined)
+      }
+    }
     // If not connected, connect first, then load
     if (ws.state === 'disconnected' || ws.state === 'error') {
       ws.connect()
@@ -224,21 +272,27 @@ export function RealtimePage() {
         const state = useAppStore.getState().realtimeState
         if (state === 'connected' || state === 'done') {
           clearInterval(check)
-          ws.loadModels(selectedEngine || undefined)
+          doLoad()
         }
       }, 100)
       // Timeout after 5s
       setTimeout(() => clearInterval(check), 5000)
     } else {
-      ws.loadModels(selectedEngine || undefined)
+      doLoad()
     }
-  }, [ws, selectedEngine])
+  }, [ws, selectedEngine, recordingMode, selectedFileAsr, hybridUpgrade])
 
   const handleUnloadModels = useCallback(() => {
     if (ws.state !== 'disconnected') {
-      ws.unloadModels(selectedEngine || undefined)
+      if (recordingMode === 'segment') {
+        ws.unloadModels(undefined, { mode: 'segment' })
+      } else if (recordingMode === 'hybrid') {
+        ws.unloadModels(selectedEngine || undefined, { mode: 'hybrid' })
+      } else {
+        ws.unloadModels(selectedEngine || undefined)
+      }
     }
-  }, [ws, selectedEngine])
+  }, [ws, selectedEngine, recordingMode])
 
   // ── Auto-scroll transcript ──
   useEffect(() => {
@@ -261,6 +315,13 @@ export function RealtimePage() {
       sourceType = 'system_audio'
     } else {
       sourceType = 'microphone'
+    }
+
+    // 勾选了需要 LLM 的功能但没选 LLM
+    const needsLlm = enableNaming || enableCorrection || enableSummary
+    if (needsLlm && (!selectedLlm || selectedLlm === 'disabled')) {
+      setInputError('已勾选智能命名/错别字校正/会议总结，请先选择一个 LLM 模型')
+      return
     }
 
     setInputError(null)
@@ -323,6 +384,11 @@ export function RealtimePage() {
       enableSummary,
       asrEngine: selectedEngine || undefined,
       genderModel: selectedGenderModel || undefined,
+      llmModel: selectedLlm || undefined,
+      mode: recordingMode,
+      hybridUpgrade: recordingMode === 'hybrid' ? hybridUpgrade : undefined,
+      sentenceAsrModel: recordingMode !== 'streaming' ? selectedFileAsr : undefined,
+      enableDenoise,
     })
 
     setRecording({ isRecording: true })
@@ -337,6 +403,11 @@ export function RealtimePage() {
     enableNaming,
     enableCorrection,
     enableSummary,
+    enableDenoise,
+    selectedLlm,
+    recordingMode,
+    hybridUpgrade,
+    selectedFileAsr,
     clearRealtimeSegments,
     setPostProcessProgress,
     setRealtimeState,
@@ -384,8 +455,8 @@ export function RealtimePage() {
 
   return (
     <div className="flex flex-col h-full">
-      {/* ── Row 1: 会议名称和模型选择 ── */}
-      <div className="flex items-center justify-center gap-4 py-3 bg-gray-100 border-b border-gray-200">
+      {/* ── Row 1: 模型选择 ── */}
+      <div className="flex items-center justify-center gap-3 py-3 bg-gray-100 border-b border-gray-200 flex-wrap px-4">
         {/* 会议名称 */}
         <input
           type="text"
@@ -393,29 +464,59 @@ export function RealtimePage() {
           onChange={(e) => setMeetingName(e.target.value)}
           placeholder="会议名称（可选）"
           disabled={controlsDisabled}
-          className="px-3 py-2 border border-gray-300 rounded text-sm w-40 disabled:bg-gray-200 disabled:cursor-not-allowed"
+          className="px-3 py-2 border border-gray-300 rounded text-sm w-36 disabled:bg-gray-200 disabled:cursor-not-allowed"
         />
 
-        {/* ASR 引擎选择 + 加载/释放按钮 */}
-        <div className="flex items-center gap-1">
-          <select
-            value={selectedEngine}
-            onChange={(e) => setSelectedEngine(e.target.value)}
-            disabled={controlsDisabled || engines.length <= 1}
-            className="px-3 py-2 border border-gray-300 rounded-l text-sm disabled:bg-gray-200 disabled:cursor-not-allowed"
-          >
-            {engines.filter((e) => e.installed).map((engine) => (
-              <option key={engine.id} value={engine.id}>
-                {engine.name}
-              </option>
-            ))}
-            {engines.length === 0 && <option>加载中...</option>}
-          </select>
+        {/* 流式引擎选择 (streaming/hybrid) */}
+        {recordingMode !== 'segment' && (
+          <div className="flex items-center gap-1">
+            <select
+              value={selectedEngine}
+              onChange={(e) => setSelectedEngine(e.target.value)}
+              disabled={controlsDisabled || engines.length <= 1}
+              className="px-3 py-2 border border-gray-300 rounded-l text-sm disabled:bg-gray-200 disabled:cursor-not-allowed"
+              title="流式 ASR 引擎"
+            >
+              {engines.filter((e) => e.installed).map((engine) => (
+                <option key={engine.id} value={engine.id}>
+                  {engine.name}
+                </option>
+              ))}
+              {engines.length === 0 && <option>加载中...</option>}
+            </select>
+          </div>
+        )}
+
+        {/* 文件 ASR 模型选择 (segment/hybrid) */}
+        {recordingMode !== 'streaming' && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-gray-500 whitespace-nowrap">
+              {recordingMode === 'hybrid' ? '升级ASR' : '文件ASR'}
+            </span>
+            <select
+              value={selectedFileAsr}
+              onChange={(e) => setSelectedFileAsr(e.target.value)}
+              disabled={controlsDisabled}
+              className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[220px]"
+              title="文件 ASR 模型（用于段级/混合模式的高精度转写）"
+            >
+              {fileAsrModels.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.display_name}{m.engine ? ` [${m.engine}]` : ''}
+                </option>
+              ))}
+              {fileAsrModels.length === 0 && <option>无可用模型</option>}
+            </select>
+          </div>
+        )}
+
+        {/* 模型加载/释放 */}
+        <div className="flex items-center gap-0">
           <button
             onClick={handleLoadModels}
             disabled={controlsDisabled || ws.modelsReady || isModelsLoading}
             className={clsx(
-              'flex items-center gap-1 px-2.5 py-2 border text-sm font-medium transition-colors',
+              'flex items-center gap-1 px-2.5 py-2 border text-sm font-medium transition-colors rounded-l',
               ws.modelsReady
                 ? 'bg-green-50 border-green-300 text-green-700 cursor-default'
                 : isModelsLoading
@@ -467,7 +568,6 @@ export function RealtimePage() {
           </select>
         </div>
 
-
         {/* 性别检测模型 */}
         <div className="flex items-center gap-1">
           <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>
@@ -487,8 +587,61 @@ export function RealtimePage() {
         </div>
       </div>
 
-      {/* ── Row 2: 录音控制 ── */}
+      {/* ── Row 2: 模式选择 + 录音控制 ── */}
       <div className="flex items-center justify-center gap-4 py-3 bg-gray-100">
+        {/* 模式选择器 */}
+        <div className="flex rounded-lg overflow-hidden border border-gray-300">
+          {([
+            { mode: 'streaming' as RecordingMode, label: '字级流式', tip: '逐字实时输出，~600ms延迟' },
+            { mode: 'segment' as RecordingMode, label: '段级转写', tip: 'VAD 检测到语音段结束后高精度转写，~1-2s延迟' },
+            { mode: 'hybrid' as RecordingMode, label: '混合模式', tip: '流式先出字，段完成后升级替换' },
+          ]).map(({ mode, label, tip }) => (
+            <button
+              key={mode}
+              onClick={() => setRecordingMode(mode)}
+              disabled={controlsDisabled}
+              title={tip}
+              className={clsx(
+                'px-3 py-2 text-sm font-medium transition-colors border-r last:border-r-0 border-gray-300',
+                recordingMode === mode
+                  ? 'bg-blue-600 text-white'
+                  : controlsDisabled
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-white text-gray-700 hover:bg-blue-50 hover:text-blue-700'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* 混合模式升级粒度子选择器 */}
+        {recordingMode === 'hybrid' && (
+          <div className="flex rounded overflow-hidden border border-blue-300">
+            {([
+              { mode: 'segment' as HybridUpgradeMode, label: '段级', tip: '流式引擎完成一段后用文件 ASR 升级，反馈最快' },
+              { mode: 'full' as HybridUpgradeMode, label: '整体', tip: '录音结束后用文件 ASR 重新转写，精度最好' },
+            ]).map(({ mode, label, tip }) => (
+              <button
+                key={mode}
+                onClick={() => setHybridUpgrade(mode)}
+                disabled={controlsDisabled}
+                title={tip}
+                className={clsx(
+                  'px-2 py-1 text-xs font-medium transition-colors border-r last:border-r-0 border-blue-300',
+                  hybridUpgrade === mode
+                    ? 'bg-blue-500 text-white'
+                    : controlsDisabled
+                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      : 'bg-white text-blue-700 hover:bg-blue-50'
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* 系统音频选择 */}
         <div className="flex items-center gap-1">
           <Monitor className={clsx('w-4 h-4', enableSystemAudio ? 'text-blue-600' : 'text-gray-500')} />
@@ -657,7 +810,7 @@ export function RealtimePage() {
                 : isRecording
                   ? '等待语音输入...'
                   : !ws.modelsReady
-                    ? '请先选择 ASR 引擎并点击「加载」按钮'
+                    ? '请先选择引擎/模型并点击「加载」按钮'
                     : canRecord
                       ? '模型已就绪，点击「开始录音」开始实时转写'
                       : '处理中...'}
@@ -668,24 +821,42 @@ export function RealtimePage() {
               <div
                 key={seg.id}
                 className={clsx(
-                  'px-3 py-2 rounded-lg text-sm',
-                  seg.isFinal
-                    ? 'bg-white border border-gray-200'
-                    : 'bg-yellow-50 border border-yellow-200 italic'
+                  'px-3 py-2 rounded-lg text-sm transition-colors duration-500',
+                  seg.isPlaceholder
+                    ? 'bg-gray-50 border border-gray-200 italic'
+                    : upgradedSegmentIds.has(seg.id)
+                      ? 'bg-green-50 border border-green-300'
+                      : seg.isFinal
+                        ? 'bg-white border border-gray-200'
+                        : 'bg-yellow-50 border border-yellow-200 italic'
                 )}
               >
                 <span className="text-xs text-gray-400 mr-2 font-mono">
                   [{formatTime(seg.startTime)}]
                 </span>
+                {seg.isUpgraded && !upgradedSegmentIds.has(seg.id) && (
+                  <span className="text-xs text-green-600 mr-1" title="已由高精度模型升级">
+                    [升级]
+                  </span>
+                )}
                 <span
                   className={clsx(
-                    seg.isFinal ? 'text-gray-800' : 'text-gray-600'
+                    seg.isPlaceholder
+                      ? 'text-gray-400'
+                      : upgradedSegmentIds.has(seg.id)
+                        ? 'text-green-800'
+                        : seg.isFinal
+                          ? 'text-gray-800'
+                          : 'text-gray-600'
                   )}
                 >
                   {seg.text}
                 </span>
-                {!seg.isFinal && (
+                {!seg.isFinal && !seg.isPlaceholder && (
                   <span className="inline-block w-0.5 h-4 bg-yellow-500 ml-0.5 animate-pulse align-middle" />
+                )}
+                {seg.isPlaceholder && (
+                  <Loader2 className="inline-block w-3 h-3 ml-1 animate-spin text-gray-400 align-middle" />
                 )}
               </div>
             ))}
@@ -731,6 +902,18 @@ export function RealtimePage() {
           会议总结
         </label>
 
+        <span className="text-gray-300">|</span>
+
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="DeepFilterNet3 实时降噪，降低背景噪音对转写的干扰">
+          <input
+            type="checkbox"
+            checked={enableDenoise}
+            onChange={(e) => setEnableDenoise(e.target.checked)}
+            disabled={controlsDisabled}
+          />
+          实时降噪
+        </label>
+
         <div className="flex-1" />
 
         {(audio.error || inputError) && (
@@ -738,7 +921,11 @@ export function RealtimePage() {
         )}
 
         <span className="text-xs text-gray-400">
-          {engines.find((e) => e.id === selectedEngine)?.name || '流式识别'}
+          {recordingMode === 'streaming'
+            ? engines.find((e) => e.id === selectedEngine)?.name || '流式识别'
+            : recordingMode === 'segment'
+              ? `段级转写: ${selectedFileAsr}`
+              : `混合(${hybridUpgrade === 'segment' ? '段级' : '整体'}): ${engines.find((e) => e.id === selectedEngine)?.name || '流式'} + ${selectedFileAsr}`}
         </span>
       </div>
     </div>

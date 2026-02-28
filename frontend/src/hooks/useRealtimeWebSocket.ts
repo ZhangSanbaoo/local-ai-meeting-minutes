@@ -29,6 +29,8 @@ export interface PartialSegment {
   segmentId: number
   startTime: number
   endTime: number
+  isPlaceholder?: boolean
+  isUpgrade?: boolean
 }
 
 export interface PostProgress {
@@ -52,6 +54,11 @@ export interface RecordingConfig {
   asrEngine?: string
   diarizationModel?: string
   genderModel?: string
+  llmModel?: string
+  mode?: 'streaming' | 'segment' | 'hybrid'
+  hybridUpgrade?: 'segment' | 'full'
+  sentenceAsrModel?: string
+  enableDenoise?: boolean
 }
 
 interface UseRealtimeWebSocketCallbacks {
@@ -75,9 +82,9 @@ interface UseRealtimeWebSocketReturn {
   /** Send binary PCM audio data */
   sendAudioChunk: (pcmBuffer: ArrayBuffer) => void
   /** Request model loading */
-  loadModels: (asrEngine?: string) => void
+  loadModels: (asrEngine?: string, opts?: { mode?: string; sentenceAsrModel?: string; hybridUpgrade?: string }) => void
   /** Request model unloading (free GPU memory) */
-  unloadModels: (asrEngine?: string) => void
+  unloadModels: (asrEngine?: string, opts?: { mode?: string }) => void
   /** Current connection state */
   state: RealtimeState
   /** Whether ASR models are loaded and ready */
@@ -189,11 +196,32 @@ export function useRealtimeWebSocket(
             segmentId: data.segment_id as number,
             startTime: data.start_time as number,
             endTime: data.end_time as number,
+            isPlaceholder: data.is_placeholder as boolean | undefined,
+            isUpgrade: data.is_upgrade as boolean | undefined,
           })
           break
 
         case 'recording_stopped':
           updateState('post_processing')
+          break
+
+        case 'upgrade_pending':
+          updateState('post_processing')
+          callbacksRef.current.onPostProgress?.({
+            step: 'upgrade',
+            progress: 0,
+            overallProgress: 0,
+            message: data.message as string,
+          })
+          break
+
+        case 'upgrade_done':
+          callbacksRef.current.onPostProgress?.({
+            step: 'upgrade',
+            progress: 1,
+            overallProgress: 0,
+            message: data.message as string,
+          })
           break
 
         case 'post_progress':
@@ -256,6 +284,11 @@ export function useRealtimeWebSocket(
           asr_engine: config?.asrEngine,
           diarization_model: config?.diarizationModel,
           gender_model: config?.genderModel,
+          llm_model: config?.llmModel,
+          mode: config?.mode || 'streaming',
+          hybrid_upgrade: config?.hybridUpgrade || 'segment',
+          sentence_asr_model: config?.sentenceAsrModel,
+          enable_denoise: config?.enableDenoise ?? false,
         },
       })
     )
@@ -275,7 +308,7 @@ export function useRealtimeWebSocket(
     ws.send(pcmBuffer)
   }, [])
 
-  const loadModels = useCallback((asrEngine?: string) => {
+  const loadModels = useCallback((asrEngine?: string, opts?: { mode?: string; sentenceAsrModel?: string; hybridUpgrade?: string }) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
@@ -284,19 +317,24 @@ export function useRealtimeWebSocket(
     ws.send(
       JSON.stringify({
         type: 'preload_models',
-        config: { asr_engine: asrEngine },
+        config: {
+          asr_engine: asrEngine,
+          mode: opts?.mode,
+          sentence_asr_model: opts?.sentenceAsrModel,
+          hybrid_upgrade: opts?.hybridUpgrade,
+        },
       })
     )
   }, [])
 
-  const unloadModels = useCallback((asrEngine?: string) => {
+  const unloadModels = useCallback((asrEngine?: string, opts?: { mode?: string }) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return
 
     ws.send(
       JSON.stringify({
         type: 'unload_models',
-        config: { asr_engine: asrEngine },
+        config: { asr_engine: asrEngine, mode: opts?.mode },
       })
     )
   }, [])

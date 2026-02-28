@@ -272,6 +272,119 @@ def denoise_deepfilter(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# 2b. StreamingDenoiser — 实时流式降噪
+# ---------------------------------------------------------------------------
+
+
+def load_streaming_denoiser() -> None:
+    """确保 DeepFilterNet3 ONNX session 已加载（复用全局 _df_session）"""
+    global _df_session
+    if _df_session is not None:
+        return
+
+    import onnxruntime as ort
+
+    model_path = _get_deepfilter_model_path()
+    logger.info(f"加载 DeepFilterNet3 ONNX 模型 (流式降噪): {model_path}")
+
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+    sess_options.intra_op_num_threads = 4
+    sess_options.inter_op_num_threads = 1
+    sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+    _df_session = ort.InferenceSession(
+        str(model_path), sess_options,
+        providers=["CPUExecutionProvider"],
+    )
+    logger.info("DeepFilterNet3 流式降噪模型加载完成")
+
+
+class StreamingDenoiser:
+    """
+    流式 DeepFilterNet3 降噪器
+
+    跨 chunk 保持 ONNX 推理状态，实现无缝连续降噪。
+    复用全局 _df_session（不重复加载模型）。
+
+    用法:
+        load_streaming_denoiser()  # 确保模型已加载
+        denoiser = StreamingDenoiser(input_sr=16000)
+        denoised_pcm = denoiser.process_chunk(pcm_bytes)
+        denoiser.reset()  # 录音结束时重置
+    """
+
+    DF_SR = 48000
+    HOP_SIZE = 480      # 10ms/帧 @48kHz
+    STATE_SIZE = 45304
+
+    def __init__(self, input_sr: int = 16000):
+        self._input_sr = input_sr
+        self._state = np.zeros(self.STATE_SIZE, dtype=np.float32)
+        self._atten_lim_db = np.zeros(1, dtype=np.float32)
+        self._remainder_48k = np.array([], dtype=np.float32)
+
+    def process_chunk(self, pcm_int16: bytes) -> bytes:
+        """
+        处理一个 PCM chunk，返回降噪后的 PCM bytes。
+
+        输入输出格式相同：int16 LE, mono, self._input_sr Hz。
+        输出长度严格等于输入长度（ASR 时间戳不受影响）。
+        """
+        global _df_session
+        if _df_session is None:
+            return pcm_int16
+
+        input_array = np.frombuffer(pcm_int16, dtype=np.int16).astype(np.float32)
+        input_len = len(input_array)
+
+        # 重采样 input_sr → 48kHz
+        audio_48k = _resample(input_array, self._input_sr, self.DF_SR)
+
+        # 合并上次残余
+        if len(self._remainder_48k) > 0:
+            buf = np.concatenate([self._remainder_48k, audio_48k])
+        else:
+            buf = audio_48k
+        n_frames = len(buf) // self.HOP_SIZE
+        self._remainder_48k = buf[n_frames * self.HOP_SIZE:]
+
+        if n_frames == 0:
+            return pcm_int16  # 不够一帧，原样返回
+
+        # 逐帧推理
+        enhanced_frames = []
+        for i in range(n_frames):
+            frame = buf[i * self.HOP_SIZE : (i + 1) * self.HOP_SIZE]
+            out = _df_session.run(None, {
+                "input_frame": frame,
+                "states": self._state,
+                "atten_lim_db": self._atten_lim_db,
+            })
+            enhanced_frames.append(out[0])
+            self._state = out[1]
+
+        enhanced_48k = np.concatenate(enhanced_frames)
+
+        # 重采样 48kHz → input_sr
+        enhanced = _resample(enhanced_48k, self.DF_SR, self._input_sr)
+
+        # 严格对齐输入长度
+        if len(enhanced) > input_len:
+            enhanced = enhanced[:input_len]
+        elif len(enhanced) < input_len:
+            enhanced = np.pad(enhanced, (0, input_len - len(enhanced)))
+
+        return np.clip(enhanced, -32768, 32767).astype(np.int16).tobytes()
+
+    def reset(self):
+        """录音结束时重置状态"""
+        self._state = np.zeros(self.STATE_SIZE, dtype=np.float32)
+        self._atten_lim_db = np.zeros(1, dtype=np.float32)
+        self._remainder_48k = np.array([], dtype=np.float32)
+
+
+# ---------------------------------------------------------------------------
 # 3. Resemble Enhance — 语音清晰化 + 超分辨率
 # ---------------------------------------------------------------------------
 

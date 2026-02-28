@@ -117,7 +117,7 @@ class StreamingSettings(BaseSettings):
         description="FunASR VAD 语音活动检测模型目录",
     )
     funasr_vad_silence_ms: int = Field(
-        default=800,
+        default=650,
         description="VAD 判定语音结束的静默时长 (ms)，对应 fsmn-vad 的 max_end_silence_time",
     )
     funasr_chunk_size: list[int] = Field(
