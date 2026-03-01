@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 def _update_env_value(key: str, value: str) -> None:
     """更新 backend/.env 文件中的某个配置项（存在则替换，不存在则追加）"""
-    env_path = Path(__file__).resolve().parents[3] / ".env"
+    env_path = Path(__file__).resolve().parents[4] / ".env"
     if not env_path.exists():
         return
 
@@ -552,6 +552,65 @@ async def update_llm_settings(body: LLMSettingsUpdate):
         _update_env_value("MEETING_AI_LLM__N_CTX", str(body.n_ctx))
 
     return {"status": "ok", "n_ctx": settings.llm.n_ctx}
+
+
+@router.get("/llm/status")
+async def get_llm_status_endpoint():
+    """获取 LLM 当前状态"""
+    from meeting_ai.services.llm import get_llm_status
+    return get_llm_status()
+
+
+@router.post("/llm/load")
+async def load_llm(body: dict):
+    """
+    加载指定 LLM 模型
+
+    Body: {"model": "Qwen2.5-7B-Instruct-Q4_K_M"}
+    """
+    import asyncio
+    from meeting_ai.services.llm import reset_llm, get_llm
+
+    model_name = body.get("model")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="缺少 model 参数")
+
+    settings = get_settings()
+
+    # 配置 LLM
+    settings.llm.enabled = True
+    llm_model_name = model_name
+    if not llm_model_name.endswith(".gguf"):
+        llm_model_name = f"{llm_model_name}.gguf"
+    if not llm_model_name.startswith("llm/") and not llm_model_name.startswith("llm\\"):
+        llm_model_name = f"llm/{llm_model_name}"
+    settings.llm.model_path = Path(llm_model_name)
+
+    # 重置再加载
+    reset_llm()
+
+    loop = asyncio.get_event_loop()
+    try:
+        llm = await loop.run_in_executor(None, get_llm)
+        if llm is None:
+            raise HTTPException(status_code=500, detail="LLM 加载失败，请检查模型文件")
+        return {"status": "ok", "model_name": model_name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"LLM 加载失败: {e}")
+
+
+@router.post("/llm/unload")
+async def unload_llm():
+    """卸载 LLM 模型，释放显存"""
+    from meeting_ai.services.llm import reset_llm
+
+    reset_llm()
+    # 同时禁用设置，防止其他功能意外触发自动加载
+    settings = get_settings()
+    settings.llm.enabled = False
+    return {"status": "ok"}
 
 
 @router.get("/streaming-engines", response_model=StreamingEnginesListResponse)

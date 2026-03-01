@@ -236,6 +236,11 @@ export function FilePage() {
     }
 
     setProcessing(true)
+    setProgress(0, '释放显存...')
+
+    // 卸载聊天加载的 LLM，释放显存给 ASR/diarization
+    try { await api.unloadLlm() } catch { /* 忽略 */ }
+
     setProgress(0, '上传文件...')
 
     try {
@@ -779,6 +784,7 @@ export function FilePage() {
             onEdit={() => setEditingSummary(true)}
             onRegenerate={sourceType === 'history' && selectedHistoryId ? handleRegenerateSummary : undefined}
             isRegenerating={isRegeneratingSummary}
+            historyId={sourceType === 'history' ? selectedHistoryId : currentJobId}
           />
         </div>
       </div>

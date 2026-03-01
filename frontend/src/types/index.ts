@@ -87,6 +87,12 @@ export interface LLMSettings {
   recommended_n_ctx: number
 }
 
+// AI 对话消息
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 // 处理选项
 export interface ProcessOptions {
   asr_model: string

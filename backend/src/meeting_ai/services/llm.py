@@ -77,6 +77,33 @@ def get_llm():
     return _llm
 
 
+def get_llm_if_loaded():
+    """
+    获取已加载的 LLM 实例（不触发自动加载）
+
+    仅在 LLM 已经加载时返回实例，否则返回 None。
+    用于聊天等需要用户手动加载 LLM 的场景。
+    """
+    if _llm_state == "loaded":
+        return _llm
+    return None
+
+
+def get_llm_status() -> dict:
+    """
+    获取 LLM 当前状态
+
+    Returns:
+        {"state": "unloaded"|"disabled"|"loaded", "model_name": str|None}
+    """
+    model_name = None
+    if _llm_state == "loaded" and _llm is not None:
+        model_path = getattr(_llm, "model_path", None)
+        if model_path:
+            model_name = Path(model_path).stem
+    return {"state": _llm_state, "model_name": model_name}
+
+
 def reset_llm():
     """重置 LLM 状态（用于配置更改后重新加载）"""
     global _llm, _llm_state

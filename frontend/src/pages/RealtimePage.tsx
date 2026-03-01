@@ -12,7 +12,7 @@ import {
 } from '../hooks/useRealtimeWebSocket'
 import { useRecordingTimer } from '../hooks/useRecordingTimer'
 import { ProgressBar } from '../components/ProgressBar'
-import { getStreamingEngines, getModels, getAudioDevices } from '../api/client'
+import { getStreamingEngines, getModels, getAudioDevices, unloadLlm } from '../api/client'
 import type { ModelInfo, RecordingMode, RealtimeSegment, StreamingEngine, HybridUpgradeMode } from '../types'
 
 export function RealtimePage() {
@@ -251,6 +251,9 @@ export function RealtimePage() {
 
   // ── Load / Unload models ──
   const handleLoadModels = useCallback(() => {
+    // 先卸载聊天加载的 LLM，释放显存给 ASR 模型
+    unloadLlm().catch(() => {})
+
     const doLoad = () => {
       if (recordingMode === 'segment') {
         ws.loadModels(undefined, { mode: 'segment', sentenceAsrModel: selectedFileAsr || undefined })
@@ -328,6 +331,9 @@ export function RealtimePage() {
     clearRealtimeSegments()
     setPostProcessProgress(0, '')
     setIsStartPending(true)
+
+    // 卸载聊天加载的 LLM，释放显存给 ASR/diarization
+    try { await unloadLlm() } catch { /* 忽略 */ }
 
     // CRITICAL: Start audio capture FIRST while in user gesture context.
     // AudioContext.resume() requires a user gesture. If we await

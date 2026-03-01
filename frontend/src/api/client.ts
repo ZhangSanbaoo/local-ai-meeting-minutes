@@ -79,6 +79,22 @@ export async function updateLLMSettings(n_ctx: number): Promise<void> {
   await client.put('/settings/llm', { n_ctx })
 }
 
+// LLM 加载/卸载
+export async function getLlmStatus(): Promise<{ state: string; model_name: string | null }> {
+  const { data } = await client.get('/llm/status')
+  return data
+}
+
+export async function loadLlm(model: string): Promise<{ status: string; model_name: string }> {
+  const { data } = await client.post('/llm/load', { model }, { timeout: 120000 })
+  return data
+}
+
+export async function unloadLlm(): Promise<{ status: string }> {
+  const { data } = await client.post('/llm/unload')
+  return data
+}
+
 // 流式 ASR 引擎
 export async function getStreamingEngines(): Promise<StreamingEnginesResponse> {
   const { data } = await client.get<StreamingEnginesResponse>('/streaming-engines')

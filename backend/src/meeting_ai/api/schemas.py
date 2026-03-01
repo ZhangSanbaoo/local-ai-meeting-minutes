@@ -81,6 +81,12 @@ class SegmentMergeRequest(BaseModel):
     segment_ids: list[int] = Field(..., description="要合并的片段 ID 列表（必须连续）")
 
 
+class ChatRequest(BaseModel):
+    """AI 对话请求"""
+    message: str = Field(..., description="用户消息")
+    history: list[dict] = Field(default_factory=list, description="对话历史 [{role, content}]")
+
+
 # ============================================================================
 # 响应模型
 # ============================================================================

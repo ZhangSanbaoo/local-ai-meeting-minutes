@@ -6,10 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, StreamingResponse
 
 from meeting_ai.api.schemas import (
+    ChatRequest,
     HistoryItemResponse,
     HistoryListResponse,
     ProcessResultResponse,
@@ -856,3 +857,78 @@ async def merge_history_segments(history_id: str, request: SegmentMergeRequest):
         "merged_segment": merged_segment,
         "new_segment_count": len(new_segments),
     }
+
+
+@router.post("/history/{history_id}/chat")
+async def chat_with_meeting(history_id: str, request: ChatRequest):
+    """
+    基于会议内容与 AI 对话（SSE 流式响应）
+
+    返回 Server-Sent Events 流，每个事件格式：
+    - data: {"token": "..."} — 文本 token
+    - data: {"done": true} — 生成完成
+    """
+    import asyncio
+    import json as json_mod
+
+    _, data = _load_result(history_id)
+    segments_data = data.get("segments", [])
+    speakers_data = data.get("speakers", {})
+
+    if not segments_data:
+        raise HTTPException(status_code=400, detail="没有对话片段")
+
+    from meeting_ai.services.chat import (
+        build_meeting_context,
+        build_chat_messages,
+        chat_stream,
+    )
+
+    # 构建会议上下文
+    context = build_meeting_context(segments_data, speakers_data)
+
+    # 组装消息
+    messages = build_chat_messages(
+        user_message=request.message,
+        history=request.history,
+        meeting_context=context,
+    )
+
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _run_sync_generator():
+        """在线程池中运行同步生成器，逐 token 放入队列"""
+        try:
+            for token in chat_stream(messages):
+                queue.put_nowait(token)
+            queue.put_nowait(None)  # 哨兵：生成完成
+        except Exception as e:
+            queue.put_nowait(e)
+
+    async def event_generator():
+        # 启动后台线程运行同步生成器
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, _run_sync_generator)
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    # 生成完成
+                    yield f"data: {json_mod.dumps({'done': True})}\n\n"
+                    break
+                if isinstance(item, Exception):
+                    yield f"data: {json_mod.dumps({'error': str(item)}, ensure_ascii=False)}\n\n"
+                    break
+                yield f"data: {json_mod.dumps({'token': item}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"聊天生成失败: {e}")
+            yield f"data: {json_mod.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
