@@ -292,6 +292,8 @@ async def _segment_processor(
 ) -> None:
     """段级模式 consumer: VAD 切段 → 文件 ASR 转写"""
     segment_id = 0
+    was_speaking = False          # 追踪 VAD 语音状态变化
+    placeholder_sent = False      # 当前语音段是否已发送占位符
 
     while True:
         chunk = await audio_queue.get()
@@ -314,13 +316,36 @@ async def _segment_processor(
         # VAD 检测
         completed = vad.feed_chunk(bytes(batched))
 
-        for seg_audio in completed:
+        # ── A. 语音起始 → 立即发送占位符 ──
+        # 仅当: VAD 从静默变为说话，且当前没有未消费的占位符
+        if vad.is_speaking and not was_speaking and not placeholder_sent:
             segment_id += 1
-            # 发送占位提示
+            placeholder_sent = True
             await send_json(ws, {
                 "type": "partial",
                 "segment_id": segment_id,
                 "text": "语音检测中…",
+                "is_final": False,
+                "is_placeholder": True,
+                "start_time": vad._speech_start,
+                "end_time": vad._speech_start,
+            })
+
+        # ── B. 处理已完成的语音段 ──
+        for seg_audio in completed:
+            if placeholder_sent:
+                cur_id = segment_id
+                placeholder_sent = False
+            else:
+                # 语音在同一 batch 内开始+结束，占位符来不及发
+                segment_id += 1
+                cur_id = segment_id
+
+            # 更新为"转写中…"
+            await send_json(ws, {
+                "type": "partial",
+                "segment_id": cur_id,
+                "text": "转写中…",
                 "is_final": False,
                 "is_placeholder": True,
                 "start_time": seg_audio["start"],
@@ -330,12 +355,12 @@ async def _segment_processor(
             # 异步转写
             try:
                 result = await _segment_asr_transcribe(
-                    seg_audio, asr_engine, segment_id
+                    seg_audio, asr_engine, cur_id
                 )
                 streaming_segments.append(result)
                 await send_json(ws, {
                     "type": "partial",
-                    "segment_id": segment_id,
+                    "segment_id": cur_id,
                     "text": result.text,
                     "is_final": True,
                     "start_time": result.start,
@@ -345,12 +370,30 @@ async def _segment_processor(
                 logger.error(f"段级 ASR 转写错误: {e}")
                 await send_json(ws, {
                     "type": "partial",
-                    "segment_id": segment_id,
+                    "segment_id": cur_id,
                     "text": f"[转写失败: {e}]",
                     "is_final": True,
                     "start_time": seg_audio["start"],
                     "end_time": seg_audio["end"],
                 })
+
+        # ── C. 前一段刚结束 + 新语音已开始 → 为下一段发占位符 ──
+        # 场景: 前一段 speech_end 和下一段 speech_start 在同一 batch
+        # 此时 A 步骤的 was_speaking=True 所以被跳过，需要在这里补发
+        if completed and vad.is_speaking and not placeholder_sent:
+            segment_id += 1
+            placeholder_sent = True
+            await send_json(ws, {
+                "type": "partial",
+                "segment_id": segment_id,
+                "text": "语音检测中…",
+                "is_final": False,
+                "is_placeholder": True,
+                "start_time": vad._speech_start,
+                "end_time": vad._speech_start,
+            })
+
+        was_speaking = vad.is_speaking
 
         # 发送 VAD 状态给前端
         await send_json(ws, {

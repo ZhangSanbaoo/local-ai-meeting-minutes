@@ -530,6 +530,20 @@ class FunASREngine(StreamingASREngine):
                                 start=ts_pair[0] / 1000.0,
                                 end=ts_pair[1] / 1000.0,
                             ))
+                    # 时间戳少于字符数时，为剩余字符补估算时间戳
+                    covered = min(len(timestamps), len(chars))
+                    if covered < len(chars) and new_char_ts:
+                        last_end = new_char_ts[-1].end
+                        avg_dur = max(
+                            new_char_ts[-1].end - new_char_ts[-1].start, 0.05
+                        )
+                        for j in range(covered, len(chars)):
+                            est_start = last_end + (j - covered) * avg_dur
+                            new_char_ts.append(CharTimestamp(
+                                char=chars[j],
+                                start=est_start,
+                                end=est_start + avg_dur,
+                            ))
 
         if new_text:
             if not session.current_text:
@@ -797,6 +811,7 @@ class SherpaOnnxEngine(StreamingASREngine):
 
     def __init__(self) -> None:
         self._recognizer: Any | None = None
+        self._punc_model: Any | None = None
         self._settings = get_settings().streaming
         self._session_counter = 0
 
@@ -868,6 +883,32 @@ class SherpaOnnxEngine(StreamingASREngine):
         )
         logger.info("sherpa-onnx 流式 ASR 模型加载完成")
 
+        # 加载 ct-punc 标点恢复模型（与 FunASR 引擎共享同一模型）
+        models_dir = get_settings().paths.models_dir
+        punc_rel = str(self._settings.funasr_punc_dir).replace("\\", "/")
+        if punc_rel.startswith("models/"):
+            punc_rel = punc_rel[len("models/"):]
+        punc_dir = (models_dir / punc_rel).resolve()
+
+        if punc_dir.exists():
+            try:
+                from funasr import AutoModel
+                punc_device = device if device != "auto" else "cpu"
+                if punc_device == "auto":
+                    punc_device = "cpu"
+                # ct-punc 很轻量，用 CPU 即可，避免与 sherpa-onnx 争抢 GPU
+                self._punc_model = AutoModel(
+                    model=str(punc_dir),
+                    device="cpu",
+                    disable_update=True,
+                )
+                logger.info("sherpa-onnx: ct-punc 标点恢复模型加载完成")
+            except Exception as e:
+                logger.warning(f"ct-punc 加载失败（不影响 ASR）: {e}")
+                self._punc_model = None
+        else:
+            logger.warning(f"ct-punc 模型不存在: {punc_dir}（sherpa-onnx 输出将无标点）")
+
     def is_loaded(self) -> bool:
         return self._recognizer is not None
 
@@ -932,11 +973,12 @@ class SherpaOnnxEngine(StreamingASREngine):
         if is_final:
             # 录音结束：返回当前文本作为最终片段
             if text:
+                final_text = self._add_punctuation(text)
                 segment = StreamingSegment(
                     id=session.segment_counter,
                     start=session.current_segment_start,
                     end=chunk_end_time,
-                    text=text,
+                    text=final_text,
                     temp_speaker="SPEAKER_00",
                     char_timestamps=char_ts,
                 )
@@ -946,10 +988,11 @@ class SherpaOnnxEngine(StreamingASREngine):
         elif self._recognizer.is_endpoint(stream):
             # 端点检测：当前句子完成
             if text:
+                final_text = self._add_punctuation(text)
                 seg_duration = chunk_end_time - session.current_segment_start
                 # P1-3: 短回应合并
                 if (
-                    len(text.strip()) <= 2
+                    len(final_text.strip()) <= 2
                     and seg_duration < 0.5
                     and results
                 ):
@@ -959,20 +1002,20 @@ class SherpaOnnxEngine(StreamingASREngine):
                             id=prev_seg.id,
                             start=prev_seg.start,
                             end=chunk_end_time,
-                            text=prev_seg.text + text,
+                            text=prev_seg.text + final_text,
                             temp_speaker=prev_seg.temp_speaker,
                             char_timestamps=(
                                 (prev_seg.char_timestamps or []) + (char_ts or [])
                             ) or None,
                         )
                         results[-1] = (merged_seg, True)
-                        logger.debug(f"短回应合并: '{text}' → segment {prev_seg.id}")
+                        logger.debug(f"短回应合并: '{final_text}' → segment {prev_seg.id}")
                     else:
                         segment = StreamingSegment(
                             id=session.segment_counter,
                             start=session.current_segment_start,
                             end=chunk_end_time,
-                            text=text,
+                            text=final_text,
                             temp_speaker="SPEAKER_00",
                             char_timestamps=char_ts,
                         )
@@ -983,7 +1026,7 @@ class SherpaOnnxEngine(StreamingASREngine):
                         id=session.segment_counter,
                         start=session.current_segment_start,
                         end=chunk_end_time,
-                        text=text,
+                        text=final_text,
                         temp_speaker="SPEAKER_00",
                         char_timestamps=char_ts,
                     )
@@ -1084,11 +1127,26 @@ class SherpaOnnxEngine(StreamingASREngine):
             session.pending_stable_count = 0
             return full_text
 
+    def _add_punctuation(self, text: str) -> str:
+        """对文本添加标点恢复（ct-punc，与 FunASR 引擎相同逻辑）"""
+        if not text or self._punc_model is None:
+            return text
+        try:
+            punc_result = self._punc_model.generate(input=text)
+            if punc_result and len(punc_result) > 0:
+                return punc_result[0].get("text", text) or text
+        except Exception as e:
+            logger.debug(f"标点恢复失败: {e}")
+        return text
+
     def unload(self) -> None:
         if self._recognizer is not None:
             logger.info("卸载 sherpa-onnx 流式模型...")
             del self._recognizer
             self._recognizer = None
+        if self._punc_model is not None:
+            del self._punc_model
+            self._punc_model = None
 
 
 # ---------------------------------------------------------------------------

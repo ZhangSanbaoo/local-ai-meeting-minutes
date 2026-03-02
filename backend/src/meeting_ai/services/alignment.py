@@ -128,6 +128,21 @@ def _align_by_char_timestamps(
         speaker = _find_speaker_at(timeline, mid)
         char_speakers.append((ct.char, ct.start, ct.end, speaker))
 
+    # 安全网：char_ts 可能不覆盖 seg.text 全部字符（时间戳缺失或标点插入）
+    # 将 seg.text 中未被 char_ts 覆盖的尾部字符补入，避免丢字
+    ts_text = "".join(ct.char for ct in char_ts)
+    seg_text = seg.text or ""
+    if seg_text.startswith(ts_text) and len(seg_text) > len(ts_text):
+        trailing = seg_text[len(ts_text):]
+        if char_speakers:
+            last = char_speakers[-1]
+            for ch in trailing:
+                char_speakers.append((ch, last[1], last[2], last[3]))
+        else:
+            spk = _find_speaker_at(timeline, (seg.start + seg.end) / 2)
+            for ch in trailing:
+                char_speakers.append((ch, seg.start, seg.end, spk))
+
     # 合并连续同说话人的字
     groups: list[tuple[str, float, float, str]] = []  # (text, start, end, speaker)
     for char_text, c_start, c_end, speaker in char_speakers:
