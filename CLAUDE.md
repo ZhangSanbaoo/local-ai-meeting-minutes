@@ -554,6 +554,9 @@ python backend/scripts/download_all_models.py
 | 9 | 多引擎说话人辨识 + 性别检测 | ✅ 完成 |
 | 10 | 音频增强专业管线 | ✅ 完成 |
 | 10.5 | 对话编辑增强 (删除/分割/合并/说话人重分配/新建) | ✅ 完成 |
+| 10.6 | Qwen3-ASR 集成 (批量推理 + 上下文链接 + 非阻塞实时转写) | ✅ 完成 |
+| 10.7 | 实时在线说话人辨识 (diart，实时颜色标注) | ✅ 完成 |
+| 10.8 | 暗黑模式 (圆心扩散弹性动效，View Transitions API) | ✅ 完成 |
 | 11 | Tauri 桌面应用打包 | 📅 待做 |
 
 ---
@@ -625,6 +628,13 @@ python backend/scripts/download_all_models.py
 - ✅ **audeering-gender 移除**: 准确率不佳，保留 f0 / ECAPA / Wav2Vec2 三引擎
 - ✅ **性别兜底默认运行**: 不再依赖智能命名开关
 
+### **已修复的问题（2026-03-06）**
+- ✅ **Qwen3-ASR 串行推理慢**: 改为批量推理，动态 batch_size 基于空闲显存，3-5x 加速
+- ✅ **Qwen3-ASR 标点跨段断裂**: 上下文链接（上一批末 80 字 → context），改善标点连贯
+- ✅ **torchcodec/torchaudio 挂死**: Qwen3-ASR 不再传文件路径，改用 soundfile+numpy 数组
+- ✅ **实时段级转写阻塞 VAD 循环**: `await _segment_asr_transcribe()` → `asyncio.create_task()` + `asyncio.Semaphore(1)` + `asyncio.Lock()` 保护 WebSocket send
+- ✅ **暗黑模式直接切换**: 改为 View Transitions API 圆心扩散弹性动效（cubic-bezier 0.34,1.56,0.64,1）
+
 ---
 
 ## 代码风格
@@ -637,4 +647,11 @@ python backend/scripts/download_all_models.py
 
 ---
 
-*最后更新: 2026-02-25 (✅ 对话编辑增强：片段删除/说话人重分配/新建说话人 + 移除 audeering-gender + 性别检测默认兜底 + 多项 bug 修复)*
+### **Qwen3-ASR 关键注意事项**
+- `model.transcribe()` 接受 `List[(numpy_array, sr)]` 或 `List[str]`，返回 `List[ASRTranscription]`（始终是列表！）
+- 传文件路径会触发 torchcodec（ABI 不兼容挂死）→ 始终用 `sf.read()` 返回的 `(numpy_array, sr)` 元组
+- `return_time_stamps=True` 仅在 `_has_aligner=True`（已加载 qwen3-forced-aligner-0.6B）时传入
+- `_compute_batch_size(chunks)`: `torch.cuda.mem_get_info()` 获取空闲显存，减 1.5GB 安全余量，除以每段估算显存（0.15+时长×0.05 GB），上限 32
+- 上下文链接：`context_tail = batch_texts[-1][-80:]`，在批次间传递
+
+*最后更新: 2026-03-06 (✅ Qwen3-ASR 批量推理+上下文链接 + 实时非阻塞转写 + 暗黑模式动效 + 实时说话人辨识)*

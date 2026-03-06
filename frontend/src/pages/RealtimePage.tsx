@@ -462,7 +462,7 @@ export function RealtimePage() {
   return (
     <div className="flex flex-col h-full">
       {/* ── Row 1: 模型选择 ── */}
-      <div className="flex items-center justify-center gap-3 py-3 bg-gray-100 border-b border-gray-200 flex-wrap px-4">
+      <div className="flex items-center justify-center gap-3 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600 flex-wrap px-4">
         {/* 会议名称 */}
         <input
           type="text"
@@ -470,7 +470,7 @@ export function RealtimePage() {
           onChange={(e) => setMeetingName(e.target.value)}
           placeholder="会议名称（可选）"
           disabled={controlsDisabled}
-          className="px-3 py-2 border border-gray-300 rounded text-sm w-36 disabled:bg-gray-200 disabled:cursor-not-allowed"
+          className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm w-36 disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-500"
         />
 
         {/* 流式引擎选择 (streaming/hybrid) */}
@@ -480,7 +480,7 @@ export function RealtimePage() {
               value={selectedEngine}
               onChange={(e) => setSelectedEngine(e.target.value)}
               disabled={controlsDisabled || engines.length <= 1}
-              className="px-3 py-2 border border-gray-300 rounded-l text-sm disabled:bg-gray-200 disabled:cursor-not-allowed"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-l text-sm disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-200"
               title="流式 ASR 引擎"
             >
               {engines.filter((e) => e.installed).map((engine) => (
@@ -496,14 +496,14 @@ export function RealtimePage() {
         {/* 文件 ASR 模型选择 (segment/hybrid) */}
         {recordingMode !== 'streaming' && (
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 whitespace-nowrap">
+            <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
               {recordingMode === 'hybrid' ? '升级ASR' : '文件ASR'}
             </span>
             <select
               value={selectedFileAsr}
               onChange={(e) => setSelectedFileAsr(e.target.value)}
               disabled={controlsDisabled}
-              className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[220px]"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed max-w-[220px] dark:bg-gray-700 dark:text-gray-200"
               title="文件 ASR 模型（用于段级/混合模式的高精度转写）"
             >
               {fileAsrModels.map((m) => (
@@ -524,10 +524,10 @@ export function RealtimePage() {
             className={clsx(
               'flex items-center gap-1 px-2.5 py-2 border text-sm font-medium transition-colors rounded-l',
               ws.modelsReady
-                ? 'bg-green-50 border-green-300 text-green-700 cursor-default'
+                ? 'bg-green-50 dark:bg-green-900/30 border-green-300 dark:border-green-600 text-green-700 dark:text-green-400 cursor-default'
                 : isModelsLoading
-                  ? 'bg-yellow-50 border-yellow-300 text-yellow-700 cursor-wait'
-                  : 'bg-white border-gray-300 text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700',
+                  ? 'bg-yellow-50 dark:bg-yellow-900/30 border-yellow-300 dark:border-yellow-600 text-yellow-700 dark:text-yellow-400 cursor-wait'
+                  : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:border-blue-300 hover:text-blue-700 dark:hover:text-blue-400',
               (controlsDisabled && !ws.modelsReady) && 'opacity-60 cursor-not-allowed'
             )}
             title={ws.modelsReady ? '模型已就绪' : isModelsLoading ? '加载中...' : '加载模型到 GPU'}
@@ -543,10 +543,10 @@ export function RealtimePage() {
             onClick={handleUnloadModels}
             disabled={controlsDisabled || !ws.modelsReady || isModelsLoading}
             className={clsx(
-              'flex items-center gap-1 px-2.5 py-2 border border-gray-300 rounded-r text-sm font-medium transition-colors',
+              'flex items-center gap-1 px-2.5 py-2 border border-gray-300 dark:border-gray-600 rounded-r text-sm font-medium transition-colors',
               ws.modelsReady && !controlsDisabled
-                ? 'bg-white text-gray-700 hover:bg-red-50 hover:border-red-300 hover:text-red-700'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                ? 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/30 hover:border-red-300 hover:text-red-700 dark:hover:text-red-400'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'
             )}
             title="释放模型显存"
           >
@@ -557,12 +557,12 @@ export function RealtimePage() {
 
         {/* LLM 模型选择 */}
         <div className="flex items-center gap-1">
-          <span className="text-xs text-gray-500 whitespace-nowrap">LLM</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">LLM</span>
           <select
             value={selectedLlm}
             onChange={(e) => setSelectedLlm(e.target.value)}
             disabled={controlsDisabled}
-            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[220px]"
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed max-w-[220px] dark:bg-gray-700 dark:text-gray-200"
             title="LLM 模型（智能命名/总结）"
           >
             {llmModels.map((m) => (
@@ -576,12 +576,12 @@ export function RealtimePage() {
 
         {/* 性别检测模型 */}
         <div className="flex items-center gap-1">
-          <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>
+          <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">性别</span>
           <select
             value={selectedGenderModel}
             onChange={(e) => setSelectedGenderModel(e.target.value)}
             disabled={controlsDisabled}
-            className="px-3 py-2 border border-gray-300 rounded text-sm disabled:bg-gray-200 disabled:cursor-not-allowed max-w-[240px]"
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed max-w-[240px] dark:bg-gray-700 dark:text-gray-200"
             title="性别检测模型"
           >
             {genderModels.map((m) => (
@@ -594,9 +594,9 @@ export function RealtimePage() {
       </div>
 
       {/* ── Row 2: 模式选择 + 录音控制 ── */}
-      <div className="flex items-center justify-center gap-4 py-3 bg-gray-100">
+      <div className="flex items-center justify-center gap-4 py-3 bg-gray-100 dark:bg-gray-800">
         {/* 模式选择器 */}
-        <div className="flex rounded-lg overflow-hidden border border-gray-300">
+        <div className="flex rounded-lg overflow-hidden border border-gray-300 dark:border-gray-600">
           {([
             { mode: 'streaming' as RecordingMode, label: '字级流式', tip: '逐字实时输出，~600ms延迟' },
             { mode: 'segment' as RecordingMode, label: '段级转写', tip: 'VAD 检测到语音段结束后高精度转写，~1-2s延迟' },
@@ -608,12 +608,12 @@ export function RealtimePage() {
               disabled={controlsDisabled}
               title={tip}
               className={clsx(
-                'px-3 py-2 text-sm font-medium transition-colors border-r last:border-r-0 border-gray-300',
+                'px-3 py-2 text-sm font-medium transition-colors border-r last:border-r-0 border-gray-300 dark:border-gray-600',
                 recordingMode === mode
                   ? 'bg-blue-600 text-white'
                   : controlsDisabled
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-white text-gray-700 hover:bg-blue-50 hover:text-blue-700'
+                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:hover:text-blue-400'
               )}
             >
               {label}
@@ -623,7 +623,7 @@ export function RealtimePage() {
 
         {/* 混合模式升级粒度子选择器 */}
         {recordingMode === 'hybrid' && (
-          <div className="flex rounded overflow-hidden border border-blue-300">
+          <div className="flex rounded overflow-hidden border border-blue-300 dark:border-blue-600">
             {([
               { mode: 'segment' as HybridUpgradeMode, label: '段级', tip: '流式引擎完成一段后用文件 ASR 升级，反馈最快' },
               { mode: 'full' as HybridUpgradeMode, label: '整体', tip: '录音结束后用文件 ASR 重新转写，精度最好' },
@@ -634,12 +634,12 @@ export function RealtimePage() {
                 disabled={controlsDisabled}
                 title={tip}
                 className={clsx(
-                  'px-2 py-1 text-xs font-medium transition-colors border-r last:border-r-0 border-blue-300',
+                  'px-2 py-1 text-xs font-medium transition-colors border-r last:border-r-0 border-blue-300 dark:border-blue-600',
                   hybridUpgrade === mode
                     ? 'bg-blue-500 text-white'
                     : controlsDisabled
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : 'bg-white text-blue-700 hover:bg-blue-50'
+                      ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                      : 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'
                 )}
               >
                 {label}
@@ -650,7 +650,7 @@ export function RealtimePage() {
 
         {/* 系统音频选择 */}
         <div className="flex items-center gap-1">
-          <Monitor className={clsx('w-4 h-4', enableSystemAudio ? 'text-blue-600' : 'text-gray-500')} />
+          <Monitor className={clsx('w-4 h-4', enableSystemAudio ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400')} />
           <select
             value={enableSystemAudio ? 'enabled' : 'disabled'}
             onChange={(e) => setEnableSystemAudio(e.target.value === 'enabled')}
@@ -658,10 +658,10 @@ export function RealtimePage() {
             className={clsx(
               'px-2 py-2 border rounded text-sm max-w-[200px]',
               controlsDisabled
-                ? 'bg-gray-200 cursor-not-allowed border-gray-300'
+                ? 'bg-gray-200 dark:bg-gray-700 cursor-not-allowed border-gray-300 dark:border-gray-600 dark:text-gray-400'
                 : enableSystemAudio
-                  ? 'border-blue-400 bg-blue-50 text-blue-800'
-                  : 'border-gray-300'
+                  ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'
+                  : 'border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
             )}
             title="系统音频（通过屏幕共享捕获）"
           >
@@ -672,7 +672,7 @@ export function RealtimePage() {
 
         {/* 麦克风选择 */}
         <div className="flex items-center gap-1">
-          <Mic className={clsx('w-4 h-4', enableMicrophone ? 'text-blue-600' : 'text-gray-500')} />
+          <Mic className={clsx('w-4 h-4', enableMicrophone ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400')} />
           <select
             value={enableMicrophone ? selectedMicId : 'disabled'}
             onChange={(e) => {
@@ -687,10 +687,10 @@ export function RealtimePage() {
             className={clsx(
               'px-2 py-2 border rounded text-sm max-w-[280px]',
               controlsDisabled
-                ? 'bg-gray-200 cursor-not-allowed border-gray-300'
+                ? 'bg-gray-200 dark:bg-gray-700 cursor-not-allowed border-gray-300 dark:border-gray-600 dark:text-gray-400'
                 : enableMicrophone
-                  ? 'border-blue-400 bg-blue-50 text-blue-800'
-                  : 'border-gray-300'
+                  ? 'border-blue-400 dark:border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300'
+                  : 'border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
             )}
           >
             <option value="disabled">不启用</option>
@@ -739,14 +739,14 @@ export function RealtimePage() {
         </button>
 
         {/* 时长显示 */}
-        <span className="text-3xl font-bold text-gray-700 font-mono w-24 text-center">
+        <span className="text-3xl font-bold text-gray-700 dark:text-gray-200 font-mono w-24 text-center">
           {formatTime(timer.elapsedTime)}
         </span>
 
         {/* 音量条 */}
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-gray-500">音量</span>
-          <div className="w-32 h-2.5 bg-gray-300 rounded-full overflow-hidden">
+          <span className="text-xs text-gray-500 dark:text-gray-400">音量</span>
+          <div className="w-32 h-2.5 bg-gray-300 dark:bg-gray-600 rounded-full overflow-hidden">
             <div
               className={clsx(
                 'h-full transition-all duration-75 ease-out',
@@ -763,23 +763,23 @@ export function RealtimePage() {
             'w-10 h-10 rounded-full flex items-center justify-center transition-colors',
             isRecording
               ? 'bg-red-500 animate-pulse'
-              : 'bg-gray-300'
+              : 'bg-gray-300 dark:bg-gray-600'
           )}
           title={isRecording ? '录音中' : '语音活动检测'}
         >
           <Mic className={clsx(
             'w-5 h-5',
-            isRecording ? 'text-white' : 'text-gray-500'
+            isRecording ? 'text-white' : 'text-gray-500 dark:text-gray-400'
           )} />
         </div>
       </div>
 
       {/* ── 后处理进度条 ── */}
       {isPostProcessing && (
-        <div className="px-4 py-3 bg-blue-50 border-b border-blue-200">
+        <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-700">
           <div className="flex items-center gap-2 mb-1">
-            <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-            <span className="text-sm font-medium text-blue-800">
+            <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+            <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
               后处理中...
             </span>
           </div>
@@ -792,12 +792,12 @@ export function RealtimePage() {
 
       {/* ── 状态栏 ── */}
       {realtimeState === 'error' && (
-        <div className="px-4 py-2 bg-red-50 text-sm text-red-700 border-b border-red-200">
+        <div className="px-4 py-2 bg-red-50 dark:bg-red-900/30 text-sm text-red-700 dark:text-red-400 border-b border-red-200 dark:border-red-700">
           连接错误。请检查后端是否运行，然后重试。
         </div>
       )}
       {realtimeState === 'done' && (
-        <div className="px-4 py-2 bg-green-50 text-sm text-green-700 border-b border-green-200">
+        <div className="px-4 py-2 bg-green-50 dark:bg-green-900/30 text-sm text-green-700 dark:text-green-400 border-b border-green-200 dark:border-green-700">
           处理完成！结果已保存到历史记录。
         </div>
       )}
@@ -805,10 +805,10 @@ export function RealtimePage() {
       {/* ── 实时转写列表 ── */}
       <div
         ref={scrollRef}
-        className="flex-1 mx-4 my-2 border border-gray-300 rounded-lg overflow-auto"
+        className="flex-1 mx-4 my-2 border border-gray-300 dark:border-gray-600 rounded-lg overflow-auto dark:bg-gray-900"
       >
         {realtimeSegments.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
             {isModelsLoading
               ? '正在加载 ASR 模型...'
               : isLoading
@@ -829,31 +829,31 @@ export function RealtimePage() {
                 className={clsx(
                   'px-3 py-2 rounded-lg text-sm transition-colors duration-500',
                   seg.isPlaceholder
-                    ? 'bg-gray-50 border border-gray-200 italic'
+                    ? 'bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-600 italic'
                     : upgradedSegmentIds.has(seg.id)
-                      ? 'bg-green-50 border border-green-300'
+                      ? 'bg-green-50 dark:bg-green-900/30 border border-green-300 dark:border-green-600'
                       : seg.isFinal
-                        ? 'bg-white border border-gray-200'
-                        : 'bg-yellow-50 border border-yellow-200 italic'
+                        ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600'
+                        : 'bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-600 italic'
                 )}
               >
-                <span className="text-xs text-gray-400 mr-2 font-mono">
+                <span className="text-xs text-gray-400 dark:text-gray-500 mr-2 font-mono">
                   [{formatTime(seg.startTime)}]
                 </span>
                 {seg.isUpgraded && !upgradedSegmentIds.has(seg.id) && (
-                  <span className="text-xs text-green-600 mr-1" title="已由高精度模型升级">
+                  <span className="text-xs text-green-600 dark:text-green-400 mr-1" title="已由高精度模型升级">
                     [升级]
                   </span>
                 )}
                 <span
                   className={clsx(
                     seg.isPlaceholder
-                      ? 'text-gray-400'
+                      ? 'text-gray-400 dark:text-gray-500'
                       : upgradedSegmentIds.has(seg.id)
-                        ? 'text-green-800'
+                        ? 'text-green-800 dark:text-green-300'
                         : seg.isFinal
-                          ? 'text-gray-800'
-                          : 'text-gray-600'
+                          ? 'text-gray-800 dark:text-gray-100'
+                          : 'text-gray-600 dark:text-gray-300'
                   )}
                 >
                   {seg.text}
@@ -862,7 +862,7 @@ export function RealtimePage() {
                   <span className="inline-block w-0.5 h-4 bg-yellow-500 ml-0.5 animate-pulse align-middle" />
                 )}
                 {seg.isPlaceholder && (
-                  <Loader2 className="inline-block w-3 h-3 ml-1 animate-spin text-gray-400 align-middle" />
+                  <Loader2 className="inline-block w-3 h-3 ml-1 animate-spin text-gray-400 dark:text-gray-500 align-middle" />
                 )}
               </div>
             ))}
@@ -871,10 +871,10 @@ export function RealtimePage() {
       </div>
 
       {/* ── 底部选项 ── */}
-      <div className="flex items-center gap-4 px-4 py-3 bg-gray-100 flex-wrap">
-        <span className="text-sm text-gray-600">录音结束后处理:</span>
+      <div className="flex items-center gap-4 px-4 py-3 bg-gray-100 dark:bg-gray-800 flex-wrap">
+        <span className="text-sm text-gray-600 dark:text-gray-300">录音结束后处理:</span>
 
-        <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer dark:text-gray-200">
           <input
             type="checkbox"
             checked={enableNaming}
@@ -885,7 +885,7 @@ export function RealtimePage() {
           />
           智能命名
         </label>
-        <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer dark:text-gray-200">
           <input
             type="checkbox"
             checked={enableCorrection}
@@ -896,7 +896,7 @@ export function RealtimePage() {
           />
           错别字校正
         </label>
-        <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer dark:text-gray-200">
           <input
             type="checkbox"
             checked={enableSummary}
@@ -908,9 +908,9 @@ export function RealtimePage() {
           会议总结
         </label>
 
-        <span className="text-gray-300">|</span>
+        <span className="text-gray-300 dark:text-gray-600">|</span>
 
-        <label className="flex items-center gap-1.5 text-sm cursor-pointer" title="DeepFilterNet3 实时降噪，降低背景噪音对转写的干扰">
+        <label className="flex items-center gap-1.5 text-sm cursor-pointer dark:text-gray-200" title="DeepFilterNet3 实时降噪，降低背景噪音对转写的干扰">
           <input
             type="checkbox"
             checked={enableDenoise}
@@ -923,10 +923,10 @@ export function RealtimePage() {
         <div className="flex-1" />
 
         {(audio.error || inputError) && (
-          <span className="text-xs text-red-500">{audio.error || inputError}</span>
+          <span className="text-xs text-red-500 dark:text-red-400">{audio.error || inputError}</span>
         )}
 
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-gray-400 dark:text-gray-500">
           {recordingMode === 'streaming'
             ? engines.find((e) => e.id === selectedEngine)?.name || '流式识别'
             : recordingMode === 'segment'

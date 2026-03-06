@@ -5,6 +5,7 @@
   - faster-whisper  (CTranslate2，99 语言)
   - funasr          (SenseVoice / Paraformer-Large，中文最优)
   - fireredasr      (FireRedASR-AED，中文 SOTA)
+  - qwen3-asr       (Qwen3-ASR，52 语言 + 22 中文方言)
 
 使用方式:
     engine = get_asr_engine("sensevoice-small")
@@ -1378,6 +1379,383 @@ class FireRedASREngine(ASREngine):
 
 
 # ---------------------------------------------------------------------------
+# Engine: Qwen3-ASR (52 languages + 22 Chinese dialects)
+# ---------------------------------------------------------------------------
+
+# ISO language code → full name mapping for Qwen3-ASR
+_QWEN3_LANG_MAP: dict[str, str] = {
+    "zh": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean",
+    "fr": "French", "de": "German", "es": "Spanish", "pt": "Portuguese",
+    "ru": "Russian", "it": "Italian", "nl": "Dutch", "ar": "Arabic",
+    "hi": "Hindi", "th": "Thai", "vi": "Vietnamese", "id": "Indonesian",
+    "ms": "Malay", "tr": "Turkish", "pl": "Polish", "sv": "Swedish",
+    "da": "Danish", "fi": "Finnish", "no": "Norwegian", "cs": "Czech",
+    "ro": "Romanian", "hu": "Hungarian", "el": "Greek", "he": "Hebrew",
+    "uk": "Ukrainian", "bg": "Bulgarian", "hr": "Croatian", "sk": "Slovak",
+    "sl": "Slovenian", "lt": "Lithuanian", "lv": "Latvian", "et": "Estonian",
+    "sr": "Serbian", "ca": "Catalan", "gl": "Galician", "eu": "Basque",
+    "ur": "Urdu", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+    "ml": "Malayalam", "kn": "Kannada", "mr": "Marathi", "gu": "Gujarati",
+    "fa": "Persian", "sw": "Swahili", "af": "Afrikaans", "cy": "Welsh",
+    "yue": "Cantonese",
+}
+
+
+class Qwen3ASREngine(ASREngine):
+    """Qwen3-ASR 引擎（52 语言 + 22 中文方言，可选 ForcedAligner 字级时间戳）"""
+
+    def __init__(self) -> None:
+        self._model = None
+        self._model_dir: Path | None = None
+        self._has_aligner: bool = False
+
+    def load(self, model_dir: Path) -> None:
+        try:
+            from qwen_asr import Qwen3ASRModel
+        except ImportError:
+            raise ImportError(
+                "qwen-asr 未安装。请运行: pip install qwen-asr>=0.0.6\n"
+                "或: pip install -e '.[qwen3]'"
+            )
+
+        import torch
+
+        self._model_dir = model_dir
+
+        # 设备检测：settings 配置优先，但必须校验 PyTorch CUDA 实际可用
+        settings = get_settings().asr
+        device = settings.device
+        if device in ("auto", "cuda") and not torch.cuda.is_available():
+            logger.warning("[Qwen3-ASR] 设置为 CUDA 但 PyTorch 未编译 CUDA 支持，回退到 CPU")
+            device = "cpu"
+        elif device == "auto":
+            device = "cuda:0"
+        elif device == "cuda":
+            device = "cuda:0"
+
+        dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+
+        # 自动发现 ForcedAligner：扫描 models/asr/ 下匹配 qwen3*aligner* 的目录
+        aligner_dir = None
+        asr_dir = model_dir.parent  # models/asr/
+        if asr_dir.exists():
+            for d in asr_dir.iterdir():
+                if d.is_dir() and "qwen3" in d.name.lower() and "aligner" in d.name.lower():
+                    aligner_dir = d
+                    break
+
+        load_kwargs: dict = {
+            "pretrained_model_name_or_path": str(model_dir),
+            "dtype": dtype,
+            "device_map": device,
+        }
+        if aligner_dir:
+            load_kwargs["forced_aligner"] = str(aligner_dir)
+            self._has_aligner = True
+            logger.info(f"[Qwen3-ASR] 发现 ForcedAligner: {aligner_dir.name}")
+
+        logger.info(
+            f"加载 Qwen3-ASR 模型: {model_dir.name} "
+            f"(device={device}, dtype=bfloat16, aligner={self._has_aligner})"
+        )
+        self._model = Qwen3ASRModel.from_pretrained(**load_kwargs)
+
+    def transcribe(
+        self,
+        audio_path: Path | str,
+        language: str | None = None,
+        *,
+        skip_vad: bool = False,
+    ) -> TranscriptResult:
+        if self._model is None:
+            raise RuntimeError("模型未加载，请先调用 load()")
+
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+
+        import soundfile as sf
+        audio_info = sf.info(str(audio_path))
+        duration = audio_info.frames / audio_info.samplerate
+
+        # 语言映射：ISO code → 全称
+        lang = language or "zh"
+        lang_full = _QWEN3_LANG_MAP.get(lang, lang)
+
+        logger.info(f"[Qwen3-ASR] 开始转写: {audio_path.name} ({duration:.1f}s, lang={lang_full})")
+
+        # skip_vad=True：外部已做 VAD 切段（实时段级模式），直接整文件转写
+        # 实时模式不跑 aligner：仅需文本，时间戳由后处理中点匹配补充
+        if skip_vad:
+            result = self._transcribe_whole_file(audio_path, duration, lang_full, use_aligner=False)
+            logger.info(f"[Qwen3-ASR] 转写完成: 片段数={len(result.segments)}")
+            return result
+
+        # 优先 VAD 预分段转写
+        result = self._transcribe_with_vad(audio_path, duration, lang_full)
+        if result is not None:
+            logger.info(f"[Qwen3-ASR] 转写完成: 片段数={len(result.segments)}")
+            return result
+
+        # VAD 不可用，整文件转写
+        logger.info("[Qwen3-ASR] VAD 不可用，使用整文件转写")
+        result = self._transcribe_whole_file(audio_path, duration, lang_full)
+        logger.info(f"[Qwen3-ASR] 转写完成: 片段数={len(result.segments)}")
+        return result
+
+    def _transcribe_whole_file(
+        self,
+        audio_path: Path,
+        duration: float,
+        language: str,
+        use_aligner: bool = True,
+    ) -> TranscriptResult:
+        """整文件转写。use_aligner=False 时跳过 ForcedAligner（实时模式提速用）。
+        始终用 soundfile 读音频再传 numpy 数组，避免 qwen-asr 内部走 torchaudio/torchcodec。
+        """
+        import soundfile as sf
+        import numpy as np
+        audio, sr = sf.read(str(audio_path))
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        audio = audio.astype(np.float32)
+
+        results = self._model.transcribe(
+            (audio, sr),
+            language=language,
+            return_time_stamps=self._has_aligner and use_aligner,
+        )
+        result = results[0]
+
+        text = result.text.strip()
+        if not text:
+            return TranscriptResult(
+                language=language, language_probability=1.0,
+                duration=duration, segments=[], char_timestamps=None,
+            )
+
+        # 提取时间戳
+        char_ts = self._extract_char_timestamps(result, time_offset=0.0)
+
+        # use_aligner=False（实时模式）：跳过 Whisper 强制对齐，直接线性插值
+        # 避免加载第二个模型拖慢实时转写
+        if not char_ts and use_aligner:
+            char_ts = _forced_align(audio_path, text, 0.0, duration)
+        if not char_ts:
+            char_ts = self._generate_linear_timestamps(text, 0.0, duration)
+
+        seg = Segment(id=0, start=0.0, end=round(duration, 3), text=text, speaker=None)
+        return TranscriptResult(
+            language=language, language_probability=1.0,
+            duration=duration, segments=[seg],
+            char_timestamps=[char_ts] if char_ts else None,
+        )
+
+    def _compute_batch_size(self, chunks: list[tuple]) -> int:
+        """根据可用显存和实际段时长动态计算安全批量大小。
+
+        每段显存估算：0.15GB 基础开销 + 0.05GB/秒音频
+        （encoder 激活 + decoder KV cache 均随时长线性增长）
+        保留 1.5GB 安全余量。CPU 模式固定返回 1。
+        """
+        import torch
+
+        if not torch.cuda.is_available():
+            return 1
+
+        # 用「均值与最大值的中点」作参考时长，兼顾平均和极端情况
+        if chunks:
+            durations = [end - start for _, start, end in chunks]
+            ref_dur = (sum(durations) / len(durations) + max(durations)) / 2
+        else:
+            ref_dur = 5.0
+
+        mem_per_seg_gb = 0.15 + ref_dur * 0.05  # GB/段
+
+        try:
+            free_bytes, _ = torch.cuda.mem_get_info()
+            free_gb = free_bytes / 1024 ** 3
+            safe_gb = max(0.0, free_gb - 1.5)
+            batch_size = max(1, int(safe_gb / mem_per_seg_gb))
+            return min(batch_size, 32)
+        except Exception:
+            return max(1, int(3.0 / mem_per_seg_gb))  # 保守回退：假设 3GB 可用
+
+    def _transcribe_with_vad(
+        self,
+        audio_path: Path,
+        duration: float,
+        language: str,
+    ) -> TranscriptResult | None:
+        """VAD 预分段批量转写（无临时文件，直接传 numpy array）"""
+        vad_segs = _run_vad(audio_path, max_single_segment_time=15000)
+        if not vad_segs:
+            return None
+
+        import soundfile as sf
+        import numpy as np
+        audio, sr = sf.read(str(audio_path))
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)  # 多声道→单声道
+        audio = audio.astype(np.float32)
+
+        # 过滤过短片段，保留有效 (chunk_array, vad_start, vad_end)
+        valid_chunks: list[tuple[np.ndarray, float, float]] = []
+        for vad_start, vad_end in vad_segs:
+            chunk = audio[int(vad_start * sr):int(vad_end * sr)]
+            if len(chunk) >= sr * 0.1:
+                valid_chunks.append((chunk, vad_start, vad_end))
+
+        if not valid_chunks:
+            return None
+
+        batch_size = self._compute_batch_size(valid_chunks)
+        logger.info(
+            f"[Qwen3-ASR] VAD 批量转写: {len(valid_chunks)} 段 "
+            f"(batch_size={batch_size}, aligner={self._has_aligner})..."
+        )
+
+        segments: list[Segment] = []
+        all_char_ts: list[list[CharTimestamp]] = []
+        seg_id = 0
+        context_tail = ""  # 上一批末尾文字（≤80字），传给下一批作为上下文
+
+        # 分批推理（批内所有片段共享同一 context，批间滚动更新）
+        for batch_start in range(0, len(valid_chunks), batch_size):
+            batch = valid_chunks[batch_start:batch_start + batch_size]
+            n = len(batch)
+            audio_inputs = [(chunk, sr) for chunk, _, _ in batch]
+            lang_list = [language] * n
+            # 本批全部片段使用上一批的尾部文字作为上下文，帮助模型理解句子边界
+            context_list = [context_tail] * n
+
+            try:
+                batch_results = self._model.transcribe(
+                    audio_inputs,
+                    language=lang_list,
+                    context=context_list,
+                    return_time_stamps=self._has_aligner,
+                )
+            except Exception as e:
+                logger.warning(f"[Qwen3-ASR] 批次 {batch_start // batch_size} 转写失败: {e}")
+                continue
+
+            batch_texts: list[str] = []
+            for result, (chunk, vad_start, vad_end) in zip(batch_results, batch):
+                text = result.text.strip()
+                if not text:
+                    continue
+
+                batch_texts.append(text)
+
+                # 提取时间戳（二级回退：aligner → 线性插值）
+                char_ts = self._extract_char_timestamps(result, time_offset=vad_start)
+                if not char_ts:
+                    char_ts = self._generate_linear_timestamps(text, vad_start, vad_end)
+
+                segments.append(Segment(
+                    id=seg_id,
+                    start=round(vad_start, 3),
+                    end=round(vad_end, 3),
+                    text=text,
+                    speaker=None,
+                ))
+                all_char_ts.append(char_ts)
+                seg_id += 1
+
+            # 用本批最后一段非空文字的尾部更新 context，供下一批使用
+            if batch_texts:
+                context_tail = batch_texts[-1][-80:]
+
+        if not segments:
+            return None
+
+        has_ts = sum(1 for ts in all_char_ts if ts)
+        logger.info(
+            f"[Qwen3-ASR] VAD 批量转写完成: "
+            f"{len(vad_segs)} VAD段 → {len(segments)} 文本段, "
+            f"{has_ts}/{len(segments)} 段有字级时间戳"
+        )
+
+        return TranscriptResult(
+            language=language, language_probability=1.0,
+            duration=duration, segments=segments,
+            char_timestamps=all_char_ts if has_ts > 0 else None,
+        )
+
+    def _extract_char_timestamps(
+        self, result: object, time_offset: float,
+    ) -> list[CharTimestamp]:
+        """
+        从 Qwen3-ASR 结果中提取字级时间戳
+
+        result.time_stamps: list of objects with .text / .start_time / .end_time
+        词级 → 字级：均匀分配每个词的时长给各字符
+        """
+        time_stamps = getattr(result, "time_stamps", None)
+        if not time_stamps:
+            return []
+
+        char_ts: list[CharTimestamp] = []
+        try:
+            for ts in time_stamps:
+                word = ts.text if hasattr(ts, "text") else str(ts.get("text", ""))
+                start = float(ts.start_time if hasattr(ts, "start_time") else ts.get("start_time", 0))
+                end = float(ts.end_time if hasattr(ts, "end_time") else ts.get("end_time", 0))
+
+                chars = list(word)
+                if not chars:
+                    continue
+
+                word_dur = end - start
+                char_dur = word_dur / len(chars) if len(chars) > 0 else 0
+
+                for j, ch in enumerate(chars):
+                    ch_start = start + j * char_dur + time_offset
+                    ch_end = start + (j + 1) * char_dur + time_offset
+                    char_ts.append(CharTimestamp(
+                        char=ch,
+                        start=round(ch_start, 3),
+                        end=round(ch_end, 3),
+                    ))
+        except Exception as e:
+            logger.warning(f"[Qwen3-ASR] 时间戳提取失败: {e}")
+            return []
+
+        return char_ts
+
+    @staticmethod
+    def _generate_linear_timestamps(
+        text: str, start: float, end: float,
+    ) -> list[CharTimestamp]:
+        """线性插值生成字级时间戳"""
+        if not text:
+            return []
+        chars = list(text)
+        dur = end - start
+        char_dur = dur / len(chars) if chars else 0
+        return [
+            CharTimestamp(
+                char=ch,
+                start=round(start + i * char_dur, 3),
+                end=round(start + (i + 1) * char_dur, 3),
+            )
+            for i, ch in enumerate(chars)
+        ]
+
+    def unload(self) -> None:
+        self._model = None
+        self._model_dir = None
+        self._has_aligner = False
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
+# ---------------------------------------------------------------------------
 # Engine type detection
 # ---------------------------------------------------------------------------
 
@@ -1402,6 +1780,17 @@ def detect_engine_type(model_dir: Path) -> str | None:
     if "spm.model" in files:
         return "fireredasr"
 
+    # Qwen3-ASR: config.json + preprocessor_config.json + vocab.json (HF transformers 格式)
+    if "config.json" in files and "preprocessor_config.json" in files and "vocab.json" in files:
+        try:
+            import json
+            config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+            model_type = config.get("model_type", "").lower()
+            if "qwen3" in model_type:
+                return "qwen3-asr"
+        except Exception:
+            pass
+
     # 目录名回退
     name = model_dir.name.lower()
     if "whisper" in name:
@@ -1410,6 +1799,8 @@ def detect_engine_type(model_dir: Path) -> str | None:
         return "funasr"
     if "firered" in name:
         return "fireredasr"
+    if "qwen3" in name and ("asr" in name or "aligner" in name):
+        return "qwen3-asr"
 
     return None
 
@@ -1457,6 +1848,7 @@ _ENGINE_MAP = {
     "faster-whisper": FasterWhisperEngine,
     "funasr": FunASRFileEngine,
     "fireredasr": FireRedASREngine,
+    "qwen3-asr": Qwen3ASREngine,
 }
 
 

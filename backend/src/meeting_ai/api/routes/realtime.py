@@ -76,10 +76,20 @@ _AUDIO_QUEUE_MAX = 2000
 # WebSocket helpers
 # ---------------------------------------------------------------------------
 
-async def send_json(ws: WebSocket, data: dict) -> bool:
-    """安全发送 JSON 消息，返回是否成功"""
+async def send_json(
+    ws: WebSocket,
+    data: dict,
+    lock: asyncio.Lock | None = None,
+) -> bool:
+    """安全发送 JSON 消息，返回是否成功。
+    传入 lock 时串行化发送，防止并发 task 同时写 WebSocket 帧。
+    """
     try:
-        await ws.send_json(data)
+        if lock:
+            async with lock:
+                await ws.send_json(data)
+        else:
+            await ws.send_json(data)
         return True
     except Exception:
         return False
@@ -186,6 +196,43 @@ async def _segment_asr_transcribe(
             pass
 
 
+async def _do_segment_transcribe(
+    ws: WebSocket,
+    seg_audio: dict,
+    asr_engine: Any,
+    cur_id: int,
+    streaming_segments: list,
+    sem: asyncio.Semaphore,
+    send_lock: asyncio.Lock,
+) -> None:
+    """并发安全的段转写任务。
+    - sem：限制同时占用 GPU 的任务数（防止 OOM），VAD 循环不阻塞
+    - send_lock：串行化 WebSocket 发送，防止并发帧交叉
+    """
+    async with sem:
+        try:
+            result = await _segment_asr_transcribe(seg_audio, asr_engine, cur_id)
+            streaming_segments.append(result)
+            await send_json(ws, {
+                "type": "partial",
+                "segment_id": cur_id,
+                "text": result.text,
+                "is_final": True,
+                "start_time": result.start,
+                "end_time": result.end,
+            }, lock=send_lock)
+        except Exception as e:
+            logger.error(f"段级 ASR 转写错误: {e}")
+            await send_json(ws, {
+                "type": "partial",
+                "segment_id": cur_id,
+                "text": f"[转写失败: {e}]",
+                "is_final": True,
+                "start_time": seg_audio["start"],
+                "end_time": seg_audio["end"],
+            }, lock=send_lock)
+
+
 # ---------------------------------------------------------------------------
 # Audio processor (consumer task) — streaming mode (original)
 # ---------------------------------------------------------------------------
@@ -290,10 +337,20 @@ async def _segment_processor(
     asr_engine: Any,
     streaming_segments: list[StreamingSegment],
 ) -> None:
-    """段级模式 consumer: VAD 切段 → 文件 ASR 转写"""
+    """段级模式 consumer: VAD 切段 → 并发文件 ASR 转写
+
+    VAD 循环与 ASR 转写完全解耦：
+    - VAD 主循环持续消费音频 queue，不等待 GPU 转写
+    - 每个完成的语音段立即 create_task 提交转写（GPU 任务异步执行）
+    - sem=1 保证 GPU 串行使用（防 OOM），队列可堆积等待
+    - send_lock 防止并发 task 同时写 WebSocket 帧
+    """
     segment_id = 0
-    was_speaking = False          # 追踪 VAD 语音状态变化
-    placeholder_sent = False      # 当前语音段是否已发送占位符
+    was_speaking = False
+    placeholder_sent = False
+    transcribe_tasks: list[asyncio.Task] = []
+    sem = asyncio.Semaphore(1)        # GPU 同时转写任务数上限
+    send_lock = asyncio.Lock()        # WebSocket 并发写保护
 
     while True:
         chunk = await audio_queue.get()
@@ -313,11 +370,9 @@ async def _segment_processor(
             except asyncio.QueueEmpty:
                 break
 
-        # VAD 检测
         completed = vad.feed_chunk(bytes(batched))
 
         # ── A. 语音起始 → 立即发送占位符 ──
-        # 仅当: VAD 从静默变为说话，且当前没有未消费的占位符
         if vad.is_speaking and not was_speaking and not placeholder_sent:
             segment_id += 1
             placeholder_sent = True
@@ -331,17 +386,15 @@ async def _segment_processor(
                 "end_time": vad._speech_start,
             })
 
-        # ── B. 处理已完成的语音段 ──
+        # ── B. 完成的语音段 → create_task，立即返回继续循环 ──
         for seg_audio in completed:
             if placeholder_sent:
                 cur_id = segment_id
                 placeholder_sent = False
             else:
-                # 语音在同一 batch 内开始+结束，占位符来不及发
                 segment_id += 1
                 cur_id = segment_id
 
-            # 更新为"转写中…"
             await send_json(ws, {
                 "type": "partial",
                 "segment_id": cur_id,
@@ -352,34 +405,15 @@ async def _segment_processor(
                 "end_time": seg_audio["end"],
             })
 
-            # 异步转写
-            try:
-                result = await _segment_asr_transcribe(
-                    seg_audio, asr_engine, cur_id
+            task = asyncio.create_task(
+                _do_segment_transcribe(
+                    ws, seg_audio, asr_engine, cur_id,
+                    streaming_segments, sem, send_lock,
                 )
-                streaming_segments.append(result)
-                await send_json(ws, {
-                    "type": "partial",
-                    "segment_id": cur_id,
-                    "text": result.text,
-                    "is_final": True,
-                    "start_time": result.start,
-                    "end_time": result.end,
-                })
-            except Exception as e:
-                logger.error(f"段级 ASR 转写错误: {e}")
-                await send_json(ws, {
-                    "type": "partial",
-                    "segment_id": cur_id,
-                    "text": f"[转写失败: {e}]",
-                    "is_final": True,
-                    "start_time": seg_audio["start"],
-                    "end_time": seg_audio["end"],
-                })
+            )
+            transcribe_tasks.append(task)
 
-        # ── C. 前一段刚结束 + 新语音已开始 → 为下一段发占位符 ──
-        # 场景: 前一段 speech_end 和下一段 speech_start 在同一 batch
-        # 此时 A 步骤的 was_speaking=True 所以被跳过，需要在这里补发
+        # ── C. 同 batch 内前段结束+新段开始 → 补发占位符 ──
         if completed and vad.is_speaking and not placeholder_sent:
             segment_id += 1
             placeholder_sent = True
@@ -394,35 +428,35 @@ async def _segment_processor(
             })
 
         was_speaking = vad.is_speaking
-
-        # 发送 VAD 状态给前端
-        await send_json(ws, {
-            "type": "vad_status",
-            "is_speech": vad.is_speaking,
-        })
+        await send_json(ws, {"type": "vad_status", "is_speech": vad.is_speaking})
 
         if stop_after_batch:
             break
 
-    # 刷出 VAD 缓冲区
+    # 刷出 VAD 缓冲区（剩余未完成的语音段也并发提交）
     remaining = vad.flush()
     for seg_audio in remaining:
         segment_id += 1
-        try:
-            result = await _segment_asr_transcribe(
-                seg_audio, asr_engine, segment_id
+        await send_json(ws, {
+            "type": "partial",
+            "segment_id": segment_id,
+            "text": "转写中…",
+            "is_final": False,
+            "is_placeholder": True,
+            "start_time": seg_audio["start"],
+            "end_time": seg_audio["end"],
+        })
+        task = asyncio.create_task(
+            _do_segment_transcribe(
+                ws, seg_audio, asr_engine, segment_id,
+                streaming_segments, sem, send_lock,
             )
-            streaming_segments.append(result)
-            await send_json(ws, {
-                "type": "partial",
-                "segment_id": segment_id,
-                "text": result.text,
-                "is_final": True,
-                "start_time": result.start,
-                "end_time": result.end,
-            })
-        except Exception as e:
-            logger.error(f"段级 ASR flush 转写错误: {e}")
+        )
+        transcribe_tasks.append(task)
+
+    # 等待所有转写任务完成后再结束（后处理依赖 streaming_segments 完整）
+    if transcribe_tasks:
+        await asyncio.gather(*transcribe_tasks, return_exceptions=True)
 
     logger.info(f"Segment processor 结束: {segment_id} 段")
 

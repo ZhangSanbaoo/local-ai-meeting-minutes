@@ -68,6 +68,9 @@ ASR_MODEL_META: dict[str, dict[str, str]] = {
     "paraformer-large": {"cer": "1.7%", "vram": "≈1G", "label": "Paraformer-Large"},
     # FireRedASR
     "fireredasr-aed": {"cer": "0.6%", "vram": "≈3G", "label": "FireRedASR-AED"},
+    # Qwen3-ASR
+    "qwen3-asr-0.6b": {"cer": "—", "vram": "≈2G", "label": "Qwen3-ASR-0.6B"},
+    "qwen3-asr-1.7b": {"cer": "SOTA", "vram": "≈4G", "label": "Qwen3-ASR-1.7B"},
 }
 
 
@@ -142,6 +145,9 @@ async def list_models():
     if asr_dir.exists():
         for d in sorted(asr_dir.iterdir()):
             if not d.is_dir():
+                continue
+            # 跳过辅助模型（ForcedAligner 等），不在 ASR 选择列表中显示
+            if "aligner" in d.name.lower():
                 continue
             engine_type = detect_engine_type(d)
             if engine_type is None:

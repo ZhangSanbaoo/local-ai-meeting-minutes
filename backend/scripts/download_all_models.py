@@ -99,6 +99,36 @@ ASR_MODELS = [
         size_hint="~4 GB",
         note="中文 SOTA，60s 音频长度限制（已做分段处理）",
     ),
+    ModelDef(
+        name="qwen3-asr-1.7b",
+        category="asr",
+        target_dir=MODELS_DIR / "asr" / "qwen3-asr-1.7b",
+        source="huggingface",
+        repo_id="Qwen/Qwen3-ASR-1.7B",
+        description="Qwen3-ASR-1.7B · SOTA · 1.7B 参数",
+        size_hint="~4 GB",
+        note="52 语言 + 22 中文方言，推荐版本",
+    ),
+    ModelDef(
+        name="qwen3-asr-0.6b",
+        category="asr",
+        target_dir=MODELS_DIR / "asr" / "qwen3-asr-0.6b",
+        source="huggingface",
+        repo_id="Qwen/Qwen3-ASR-0.6B",
+        description="Qwen3-ASR-0.6B · 0.6B 参数",
+        size_hint="~2 GB",
+        note="52 语言 + 22 中文方言，轻量版",
+    ),
+    ModelDef(
+        name="qwen3-forced-aligner-0.6b",
+        category="asr",
+        target_dir=MODELS_DIR / "asr" / "qwen3-forced-aligner-0.6b",
+        source="huggingface",
+        repo_id="Qwen/Qwen3-ForcedAligner-0.6B",
+        description="Qwen3-ForcedAligner-0.6B · 字级时间戳",
+        size_hint="~2 GB",
+        note="配合 Qwen3-ASR 使用，提供精确字级时间戳（可选）",
+    ),
 ]
 
 # ── 说话人分离模型 ──
@@ -439,6 +469,7 @@ def main():
     parser.add_argument("--diar", action="store_true", help="下载说话人分离模型")
     parser.add_argument("--gender", action="store_true", help="下载性别检测模型")
     parser.add_argument("--list", action="store_true", help="列出所有模型信息")
+    parser.add_argument("--name", metavar="NAME", help="只下载指定名称的模型（模糊匹配）")
     parser.add_argument("-y", "--yes", action="store_true", help="跳过确认，直接下载")
     args = parser.parse_args()
 
@@ -452,7 +483,14 @@ def main():
         return
 
     # 确定要下载的模型
-    if args.all:
+    if args.name:
+        keyword = args.name.lower()
+        models = [m for m in ALL_MODELS if keyword in m.name.lower()]
+        if not models:
+            print(f"\n[错误] 未找到匹配 '{args.name}' 的模型。")
+            list_models()
+            return
+    elif args.all:
         models = list(ALL_MODELS)
     elif args.asr or args.diar or args.gender:
         models = []
@@ -527,6 +565,8 @@ def main():
 
   * SenseVoice-Large (1.6B, CER 2.1%) 尚未公开发布，暂不可下载。
     请关注: https://github.com/FunAudioLLM/SenseVoice
+
+
 """)
 
 

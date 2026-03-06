@@ -14,6 +14,9 @@ import type {
 export type TabType = 'realtime' | 'file' | 'settings'
 
 interface AppState {
+  // 主题
+  isDarkMode: boolean
+
   // Tab 状态
   activeTab: TabType
 
@@ -113,10 +116,19 @@ interface AppState {
   setRecordingMode: (mode: RecordingMode) => void
   setSentenceAsrModel: (model: string | null) => void
   setActiveTab: (tab: TabType) => void
+  toggleDarkMode: () => void
   reset: () => void
 }
 
+// 初始化暗黑模式：优先读 localStorage，其次跟随系统偏好
+function getInitialDarkMode(): boolean {
+  const stored = localStorage.getItem('darkMode')
+  if (stored !== null) return stored === 'true'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
 const initialState = {
+  isDarkMode: getInitialDarkMode(),
   activeTab: 'file' as TabType,
   asrModels: [],
   llmModels: [],
@@ -326,6 +338,14 @@ export const useAppStore = create<AppState>((set) => ({
 
   setActiveTab: (tab) =>
     set({ activeTab: tab }),
+
+  toggleDarkMode: () =>
+    set((state) => {
+      const next = !state.isDarkMode
+      localStorage.setItem('darkMode', String(next))
+      document.documentElement.classList.toggle('dark', next)
+      return { isDarkMode: next }
+    }),
 
   reset: () =>
     set({

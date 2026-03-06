@@ -27,6 +27,19 @@ body {
   background: #a1a1a1;
 }
 
+/* 暗黑模式滚动条 */
+.dark ::-webkit-scrollbar-track {
+  background: #374151;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #6b7280;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
 /* 音频播放器进度条 */
 input[type="range"].audio-slider {
   -webkit-appearance: none;
@@ -63,4 +76,47 @@ input[type="range"].audio-slider::-moz-range-thumb {
 input[type="range"].audio-slider::-moz-range-track {
   height: 6px;
   border-radius: 3px;
+}
+
+/* 暗黑模式：表单元素 */
+.dark select,
+.dark select option,
+.dark input[type="text"],
+.dark input[type="number"],
+.dark input[type="range"],
+.dark textarea {
+  color-scheme: dark;
+}
+
+/* 暗黑模式：radio 和 checkbox */
+.dark input[type="radio"],
+.dark input[type="checkbox"] {
+  color-scheme: dark;
+}
+
+/* 暗黑模式：option 元素显式着色（某些浏览器不继承 color-scheme） */
+.dark select option {
+  background-color: #374151;
+  color: #e5e7eb;
+}
+
+/* ──────────────────────────────────────────────
+   主题切换：从按钮圆心向外弹性扩散
+   使用 View Transitions API，不支持时无动画
+   ────────────────────────────────────────────── */
+@keyframes vt-theme-reveal {
+  from { clip-path: circle(0% at var(--vt-x, 50%) var(--vt-y, 50%)); }
+  to   { clip-path: circle(150% at var(--vt-x, 50%) var(--vt-y, 50%)); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 新主题从按钮圆心扩散覆盖全屏，带弹性过冲 */
+  ::view-transition-new(root) {
+    animation: vt-theme-reveal 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  /* 旧主题静止等待被覆盖（放在下层） */
+  ::view-transition-old(root) {
+    animation: none;
+    z-index: -1;
+  }
 }

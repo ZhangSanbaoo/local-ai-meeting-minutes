@@ -2,6 +2,7 @@ import { Play, Pause } from 'lucide-react'
 import { useCallback, useEffect, useRef } from 'react'
 import { useAudioPlayer } from '../hooks/useAudioPlayer'
 import { formatTime } from '../utils/format'
+import { useAppStore } from '../stores/appStore'
 
 interface AudioPlayerProps {
   src: string | null
@@ -14,6 +15,7 @@ interface AudioPlayerProps {
 }
 
 export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seekTo, seekId, seekAutoPlay = true }: AudioPlayerProps) {
+  const isDarkMode = useAppStore((s) => s.isDarkMode)
   const {
     isPlaying,
     currentTime,
@@ -67,14 +69,15 @@ export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seek
   )
 
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0
+  const trackColor = isDarkMode ? '#374151' : '#e5e7eb'
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 border border-gray-300 rounded-lg bg-white">
+    <div className="flex items-center gap-3 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800">
       {/* 播放/暂停按钮 */}
       <button
         onClick={toggle}
         disabled={!isLoaded}
-        className="flex items-center justify-center w-9 h-9 rounded-full bg-primary-600 text-white hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+        className="flex items-center justify-center w-9 h-9 rounded-full bg-primary-600 text-white hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
       >
         {isPlaying ? (
           <Pause className="w-4 h-4" />
@@ -96,20 +99,20 @@ export function AudioPlayer({ src, onTimeUpdate, onSeek, onPlayStateChange, seek
           className="audio-slider w-full disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: isLoaded
-              ? `linear-gradient(to right, #2563eb ${progress}%, #e5e7eb ${progress}%)`
-              : '#e5e7eb',
+              ? `linear-gradient(to right, #2563eb ${progress}%, ${trackColor} ${progress}%)`
+              : trackColor,
           }}
         />
       </div>
 
       {/* 时间显示 */}
-      <span className="text-xs text-gray-500 font-mono w-20 text-right">
+      <span className="text-xs text-gray-500 dark:text-gray-400 font-mono w-20 text-right">
         {formatTime(currentTime)} / {formatTime(duration)}
       </span>
 
       {/* 状态指示 */}
       <span
-        className={`text-xs ${isLoaded ? 'text-green-500' : 'text-gray-400'}`}
+        className={`text-xs ${isLoaded ? 'text-green-500' : 'text-gray-400 dark:text-gray-500'}`}
       >
         {isLoaded ? '●' : '○'}
       </span>

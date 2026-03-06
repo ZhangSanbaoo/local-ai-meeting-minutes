@@ -262,7 +262,7 @@ export function SettingsPage() {
     <div className="h-full overflow-auto p-6">
       <div className="max-w-4xl mx-auto space-y-6">
         {/* 系统信息 */}
-        <section className="bg-white rounded-lg shadow p-6">
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Cpu className="w-5 h-5" />
             系统信息
@@ -270,18 +270,18 @@ export function SettingsPage() {
           {systemInfo ? (
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="text-gray-500">版本:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">版本:</span>{' '}
                 <span className="font-medium">{systemInfo.version}</span>
               </div>
               <div>
-                <span className="text-gray-500">CUDA:</span>{' '}
-                <span className={clsx('font-medium', systemInfo.cuda_available ? 'text-green-600' : 'text-red-600')}>
+                <span className="text-gray-500 dark:text-gray-400">CUDA:</span>{' '}
+                <span className={clsx('font-medium', systemInfo.cuda_available ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
                   {systemInfo.cuda_available ? `可用 (${systemInfo.cuda_version})` : '不可用'}
                 </span>
               </div>
               {systemInfo.gpu_name && (
                 <div className="col-span-2">
-                  <span className="text-gray-500">GPU:</span>{' '}
+                  <span className="text-gray-500 dark:text-gray-400">GPU:</span>{' '}
                   <span className="font-medium">
                     {systemInfo.gpu_name}
                     {systemInfo.gpu_vram_gb != null && ` (${systemInfo.gpu_vram_gb}GB)`}
@@ -289,21 +289,21 @@ export function SettingsPage() {
                 </div>
               )}
               <div className="col-span-2">
-                <span className="text-gray-500">模型目录:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">模型目录:</span>{' '}
                 <span className="font-mono text-xs">{systemInfo.models_dir}</span>
               </div>
               <div className="col-span-2">
-                <span className="text-gray-500">输出目录:</span>{' '}
+                <span className="text-gray-500 dark:text-gray-400">输出目录:</span>{' '}
                 <span className="font-mono text-xs">{systemInfo.output_dir}</span>
               </div>
             </div>
           ) : (
-            <div className="text-gray-400">加载中...</div>
+            <div className="text-gray-400 dark:text-gray-500">加载中...</div>
           )}
         </section>
 
         {/* ASR 语音识别模型管理 */}
-        <section className="bg-white rounded-lg shadow p-6">
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <HardDrive className="w-5 h-5" />
@@ -312,7 +312,7 @@ export function SettingsPage() {
             <div className="flex items-center gap-2">
               <button
                 onClick={refreshModels}
-                className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+                className="p-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                 title="刷新"
               >
                 <RefreshCw className="w-4 h-4" />
@@ -320,7 +320,7 @@ export function SettingsPage() {
               <button
                 onClick={() => whisperInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300"
+                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600"
                 title="上传 faster-whisper 模型到 models/whisper/"
               >
                 <Upload className="w-4 h-4" />
@@ -336,7 +336,7 @@ export function SettingsPage() {
               <button
                 onClick={() => asrInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300"
+                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600"
                 title="上传 FunASR/FireRedASR 等模型到 models/asr/"
               >
                 <Upload className="w-4 h-4" />
@@ -352,12 +352,13 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className="text-sm text-gray-500 mb-4 space-y-1">
+          <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 space-y-1">
             <p>上传 .zip 或 .tar.gz 压缩包，系统根据文件特征自动识别引擎类型：</p>
             <ul className="list-disc list-inside ml-2 text-xs space-y-0.5">
-              <li><span className="font-medium text-blue-600">Whisper</span> — 含 vocabulary.json + model.bin（faster-whisper 格式）</li>
-              <li><span className="font-medium text-green-600">FunASR</span> — 含 configuration.json 或 model.py（SenseVoice / Paraformer 等）</li>
-              <li><span className="font-medium text-orange-600">FireRedASR</span> — 含 spm.model + model.pt</li>
+              <li><span className="font-medium text-blue-600 dark:text-blue-400">Whisper</span> — 含 vocabulary.json + model.bin（faster-whisper 格式）</li>
+              <li><span className="font-medium text-green-600 dark:text-green-400">FunASR</span> — 含 configuration.json 或 model.py（SenseVoice / Paraformer 等）</li>
+              <li><span className="font-medium text-orange-600 dark:text-orange-400">FireRedASR</span> — 含 spm.model + model.pt</li>
+              <li><span className="font-medium text-purple-600 dark:text-purple-400">Qwen3-ASR</span> — 含 config.json + preprocessor_config.json + vocab.json（HuggingFace 格式）</li>
             </ul>
             <p className="text-xs">不符合以上格式的模型无法使用。同框架内的模型可自由替换。</p>
           </div>
@@ -369,32 +370,34 @@ export function SettingsPage() {
                   'faster-whisper': 'Whisper',
                   'funasr': 'FunASR',
                   'fireredasr': 'FireRedASR',
+                  'qwen3-asr': 'Qwen3-ASR',
                 }
                 const engineColor: Record<string, string> = {
-                  'faster-whisper': 'bg-blue-100 text-blue-700',
-                  'funasr': 'bg-green-100 text-green-700',
-                  'fireredasr': 'bg-orange-100 text-orange-700',
+                  'faster-whisper': 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                  'funasr': 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                  'fireredasr': 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+                  'qwen3-asr': 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
                 }
                 const eng = model.engine || 'faster-whisper'
                 return (
                   <div
                     key={model.name}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                    className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg"
                   >
                     <div className="flex items-center gap-2">
-                      <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', engineColor[eng] || 'bg-gray-100 text-gray-600')}>
+                      <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', engineColor[eng] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300')}>
                         {engineLabel[eng] || eng}
                       </span>
                       <span className="font-medium">{model.display_name}</span>
                       {model.size_mb != null && (
-                        <span className="text-gray-500 text-sm">
+                        <span className="text-gray-500 dark:text-gray-400 text-sm">
                           ({model.size_mb > 1024 ? `${(model.size_mb / 1024).toFixed(1)} GB` : `${model.size_mb} MB`})
                         </span>
                       )}
                     </div>
                     <button
                       onClick={() => eng === 'faster-whisper' ? handleDeleteWhisper(model.name) : handleDeleteAsr(model.name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -404,14 +407,14 @@ export function SettingsPage() {
               })}
             </div>
           ) : (
-            <div className="text-center text-gray-400 py-8">
+            <div className="text-center text-gray-400 dark:text-gray-500 py-8">
               暂无 ASR 模型，请上传或手动放入 models/whisper/ 或 models/asr/ 目录
             </div>
           )}
         </section>
 
         {/* LLM 模型管理 */}
-        <section className="bg-white rounded-lg shadow p-6">
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <HardDrive className="w-5 h-5" />
@@ -421,7 +424,7 @@ export function SettingsPage() {
               <button
                 onClick={() => llmInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300"
+                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600"
               >
                 <Upload className="w-4 h-4" />
                 上传模型
@@ -436,7 +439,7 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className="text-sm text-gray-500 mb-4 space-y-1">
+          <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 space-y-1">
             <p>框架: llama-cpp-python。格式: .gguf（GGML 量化模型）</p>
             <p className="text-xs">推荐 Qwen2.5-7B-Instruct Q4_K_M。同框架的 GGUF 模型可自由替换。</p>
           </div>
@@ -448,19 +451,19 @@ export function SettingsPage() {
                 .map((model) => (
                   <div
                     key={model.name}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                    className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg"
                   >
                     <div>
                       <span className="font-medium">{model.display_name}</span>
                       {model.size_mb && (
-                        <span className="text-gray-500 text-sm ml-2">
+                        <span className="text-gray-500 dark:text-gray-400 text-sm ml-2">
                           ({(model.size_mb / 1024).toFixed(1)} GB)
                         </span>
                       )}
                     </div>
                     <button
                       onClick={() => handleDeleteLlm(model.name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -469,7 +472,7 @@ export function SettingsPage() {
                 ))}
             </div>
           ) : (
-            <div className="text-center text-gray-400 py-8">
+            <div className="text-center text-gray-400 dark:text-gray-500 py-8">
               暂无 LLM 模型，请上传或手动放入 models/llm/ 目录
             </div>
           )}
@@ -477,7 +480,7 @@ export function SettingsPage() {
 
 
         {/* LLM 参数设置 */}
-        <section className="bg-white rounded-lg shadow p-6">
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
           <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Cpu className="w-5 h-5" />
             LLM 参数
@@ -488,14 +491,14 @@ export function SettingsPage() {
               {/* 滑块 */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-medium text-gray-700">上下文长度 (n_ctx)</label>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-200">上下文长度 (n_ctx)</label>
                   <input
                     type="text"
                     value={nCtxInput}
                     onChange={(e) => setNCtxInput(e.target.value)}
                     onBlur={handleNCtxInputBlur}
                     onKeyDown={(e) => { if (e.key === 'Enter') handleNCtxInputBlur() }}
-                    className="w-20 text-right text-sm font-mono border border-gray-300 rounded px-2 py-1"
+                    className="w-20 text-right text-sm font-mono border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-700 dark:text-gray-200"
                   />
                 </div>
                 <input
@@ -505,9 +508,9 @@ export function SettingsPage() {
                   step={1024}
                   value={nCtxValue}
                   onChange={handleNCtxSlider}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary-600"
+                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-600"
                 />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <div className="flex justify-between text-xs text-gray-400 dark:text-gray-500 mt-1">
                   <span>1024</span>
                   <span>32768</span>
                 </div>
@@ -515,11 +518,11 @@ export function SettingsPage() {
 
               {/* 推荐值 */}
               <div className="flex items-center gap-3 text-sm">
-                <span className="text-gray-500">
+                <span className="text-gray-500 dark:text-gray-400">
                   推荐:{' '}
-                  <span className="font-medium text-green-600">{llmSettings.recommended_n_ctx}</span>
+                  <span className="font-medium text-green-600 dark:text-green-400">{llmSettings.recommended_n_ctx}</span>
                   {llmSettings.gpu_vram_gb != null && (
-                    <span className="text-gray-400 ml-1">
+                    <span className="text-gray-400 dark:text-gray-500 ml-1">
                       (基于 {llmSettings.gpu_vram_gb}GB 显存)
                     </span>
                   )}
@@ -527,7 +530,7 @@ export function SettingsPage() {
                 {nCtxValue !== llmSettings.recommended_n_ctx && (
                   <button
                     onClick={handleApplyRecommended}
-                    className="text-xs px-2 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded hover:bg-green-100"
+                    className="text-xs px-2 py-0.5 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-700 rounded hover:bg-green-100 dark:hover:bg-green-900/50"
                   >
                     应用推荐
                   </button>
@@ -535,8 +538,8 @@ export function SettingsPage() {
               </div>
 
               {/* 提示 */}
-              <div className="flex items-start gap-2 text-xs text-gray-500 bg-gray-50 rounded p-3">
-                <Info className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" />
+              <div className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded p-3">
+                <Info className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400 dark:text-gray-500" />
                 <div>
                   <p>较大值可处理更长会议，但占用更多显存。</p>
                   <p>修改后在下次使用 LLM 时生效。重启后端将恢复 .env 默认值。</p>
@@ -548,7 +551,7 @@ export function SettingsPage() {
                 {llmSaveMsg && (
                   <span className={clsx(
                     'text-sm',
-                    llmSaveMsg === '已保存' ? 'text-green-600' : 'text-red-600'
+                    llmSaveMsg === '已保存' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
                   )}>
                     {llmSaveMsg}
                   </span>
@@ -556,19 +559,19 @@ export function SettingsPage() {
                 <button
                   onClick={handleSaveLlmSettings}
                   disabled={llmSaving || nCtxValue === llmSettings.n_ctx}
-                  className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-sm"
+                  className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-sm"
                 >
                   {llmSaving ? '保存中...' : '保存'}
                 </button>
               </div>
             </div>
           ) : (
-            <div className="text-gray-400">加载中...</div>
+            <div className="text-gray-400 dark:text-gray-500">加载中...</div>
           )}
         </section>
 
         {/* 性别检测模型管理 */}
-        <section className="bg-white rounded-lg shadow p-6">
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <HardDrive className="w-5 h-5" />
@@ -578,7 +581,7 @@ export function SettingsPage() {
               <button
                 onClick={() => genderInputRef.current?.click()}
                 disabled={isUploading}
-                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300"
+                className="flex items-center gap-2 px-3 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600"
               >
                 <Upload className="w-4 h-4" />
                 上传模型
@@ -593,11 +596,11 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className="text-sm text-gray-500 mb-4 space-y-1">
+          <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 space-y-1">
             <p>上传 .zip 或 .tar.gz 压缩包。支持的引擎：</p>
             <ul className="list-disc list-inside ml-2 text-xs space-y-0.5">
-              <li><span className="font-medium text-gray-700">基频分析 (f0)</span> — 内置，无需模型文件，不可删除</li>
-              <li><span className="font-medium text-blue-600">transformers</span> — 含 config.json + model.safetensors（ECAPA-TDNN / Wav2Vec2 等音频分类模型）</li>
+              <li><span className="font-medium text-gray-700 dark:text-gray-200">基频分析 (f0)</span> — 内置，无需模型文件，不可删除</li>
+              <li><span className="font-medium text-blue-600 dark:text-blue-400">transformers</span> — 含 config.json + model.safetensors（ECAPA-TDNN / Wav2Vec2 等音频分类模型）</li>
             </ul>
             <p className="text-xs">transformers 框架内的 AutoModelForAudioClassification 模型可自由替换。</p>
           </div>
@@ -607,12 +610,12 @@ export function SettingsPage() {
               {genderModels.map((model) => (
                 <div
                   key={model.name}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                  className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg"
                 >
                   <div>
                     <span className="font-medium">{model.display_name}</span>
                     {model.size_mb != null && (
-                      <span className="text-gray-500 text-sm ml-2">
+                      <span className="text-gray-500 dark:text-gray-400 text-sm ml-2">
                         ({model.size_mb > 1024 ? `${(model.size_mb / 1024).toFixed(1)} GB` : `${model.size_mb} MB`})
                       </span>
                     )}
@@ -620,7 +623,7 @@ export function SettingsPage() {
                   {model.name !== 'f0' && (
                     <button
                       onClick={() => handleDeleteGender(model.name)}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded"
+                      className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
                       title="删除"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -630,7 +633,7 @@ export function SettingsPage() {
               ))}
             </div>
           ) : (
-            <div className="text-center text-gray-400 py-8">
+            <div className="text-center text-gray-400 dark:text-gray-500 py-8">
               暂无性别检测模型
             </div>
           )}
@@ -638,7 +641,7 @@ export function SettingsPage() {
 
         {/* 上传进度 */}
         {isUploading && (
-          <div className="fixed bottom-4 right-4 bg-white shadow-lg rounded-lg p-4 flex items-center gap-3">
+          <div className="fixed bottom-4 right-4 bg-white dark:bg-gray-800 shadow-lg dark:shadow-gray-900/50 rounded-lg p-4 flex items-center gap-3">
             <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary-600 border-t-transparent" />
             <span className="text-sm">{uploadProgress}</span>
           </div>

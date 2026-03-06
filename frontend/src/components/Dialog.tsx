@@ -40,14 +40,14 @@ export function Dialog({ open, onClose, title, children, actions }: DialogProps)
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] flex flex-col"
+        className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl dark:shadow-gray-900/50 max-w-md w-full mx-4 max-h-[90vh] flex flex-col"
       >
         {/* 标题栏 */}
-        <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h3 className="text-lg font-medium">{title}</h3>
+        <div className="flex items-center justify-between px-4 py-3 border-b dark:border-gray-600">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">{title}</h3>
           <button
             onClick={onClose}
-            className="p-1 text-gray-400 hover:text-gray-600"
+            className="p-1 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
           >
             <X className="w-5 h-5" />
           </button>
@@ -60,7 +60,7 @@ export function Dialog({ open, onClose, title, children, actions }: DialogProps)
 
         {/* 操作按钮 */}
         {actions && (
-          <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-gray-50">
+          <div className="flex items-center justify-end gap-2 px-4 py-3 border-t dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
             {actions}
           </div>
         )}
@@ -137,7 +137,7 @@ export function EditSegmentDialog({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
           >
             取消
           </button>
@@ -153,13 +153,13 @@ export function EditSegmentDialog({
     >
       <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
             说话人
           </label>
           <select
             value={isNewSpeaker ? '__new__' : selectedSpeaker}
             onChange={(e) => handleSpeakerChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200"
           >
             {speakers.map((s) => (
               <option key={s.id} value={s.id}>
@@ -174,29 +174,29 @@ export function EditSegmentDialog({
               value={newSpeakerName}
               onChange={(e) => setNewSpeakerName(e.target.value)}
               placeholder="输入新说话人的名字"
-              className="w-full mt-2 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full mt-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200"
               autoFocus
             />
           )}
           {!isNewSpeaker && selectedSpeaker !== segment?.speakerId && (
-            <p className="text-xs text-orange-600 mt-1">
+            <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
               将把此片段重新分配给 {speakers.find(s => s.id === selectedSpeaker)?.name || selectedSpeaker}
             </p>
           )}
           {isNewSpeaker && newSpeakerName.trim() && (
-            <p className="text-xs text-green-600 mt-1">
+            <p className="text-xs text-green-600 dark:text-green-400 mt-1">
               将创建新说话人 "{newSpeakerName.trim()}" ({selectedSpeaker})
             </p>
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
             内容
           </label>
           <textarea
             ref={textRef}
             rows={4}
-            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200 resize-none"
           />
         </div>
       </div>
@@ -244,7 +244,7 @@ export function RenameSpeakerDialog({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
           >
             取消
           </button>
@@ -258,25 +258,25 @@ export function RenameSpeakerDialog({
       }
     >
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
+        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           <span>当前名字:</span>
           <span className="font-medium">{speaker?.name}</span>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
             新名字
           </label>
           <input
             ref={inputRef}
             type="text"
-            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200"
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
           />
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
           将影响 {speaker?.count || 0} 条对话记录
         </p>
-        <p className="text-xs text-orange-600">
+        <p className="text-xs text-orange-600 dark:text-orange-400">
           修改后将替换所有该说话人的显示名
         </p>
       </div>
@@ -321,7 +321,7 @@ export function EditSummaryDialog({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
           >
             取消
           </button>
@@ -337,7 +337,7 @@ export function EditSummaryDialog({
       <textarea
         ref={textRef}
         rows={15}
-        className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none font-mono text-sm"
+        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200 resize-none font-mono text-sm"
         placeholder="支持 Markdown 格式..."
       />
     </Dialog>
@@ -396,7 +396,7 @@ export function RenameHistoryDialog({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
           >
             取消
           </button>
@@ -410,23 +410,23 @@ export function RenameHistoryDialog({
       }
     >
       <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
+        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
           <span>当前名称:</span>
           <span className="font-medium truncate">{currentName}</span>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
             新名称
           </label>
           <input
             ref={inputRef}
             type="text"
-            className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200"
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             placeholder="输入新的会议名称"
           />
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
           重命名后会保留原始时间戳
         </p>
       </div>
@@ -497,7 +497,7 @@ export function SplitSegmentDialog({
         <>
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            className="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100"
           >
             取消
           </button>
@@ -513,7 +513,7 @@ export function SplitSegmentDialog({
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-gray-300">
           点击文本中要分割的位置，或选中文字确定分割点
         </p>
 
@@ -521,7 +521,7 @@ export function SplitSegmentDialog({
         <div
           ref={textRef}
           onClick={handleTextClick}
-          className="p-3 bg-gray-50 rounded border cursor-text text-sm leading-relaxed select-text"
+          className="p-3 bg-gray-50 dark:bg-gray-900 rounded border dark:border-gray-600 cursor-text text-sm leading-relaxed select-text dark:text-gray-200"
           style={{ minHeight: '80px' }}
         >
           {segment?.text}
@@ -530,13 +530,13 @@ export function SplitSegmentDialog({
         {/* 分割预览 */}
         {splitPosition !== null && (
           <div className="space-y-2">
-            <p className="text-sm font-medium text-gray-700">分割预览：</p>
-            <div className="p-2 bg-blue-50 rounded border border-blue-200 text-sm">
-              <span className="text-xs text-blue-600 font-medium">[片段 1 - {segment?.speaker}]</span>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-200">分割预览：</p>
+            <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded border border-blue-200 dark:border-blue-700 text-sm dark:text-gray-200">
+              <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">[片段 1 - {segment?.speaker}]</span>
               <p className="mt-1">{text1}</p>
             </div>
-            <div className="p-2 bg-green-50 rounded border border-green-200 text-sm">
-              <span className="text-xs text-green-600 font-medium">[片段 2]</span>
+            <div className="p-2 bg-green-50 dark:bg-green-900/30 rounded border border-green-200 dark:border-green-700 text-sm dark:text-gray-200">
+              <span className="text-xs text-green-600 dark:text-green-400 font-medium">[片段 2]</span>
               <p className="mt-1">{text2}</p>
             </div>
           </div>
@@ -545,13 +545,13 @@ export function SplitSegmentDialog({
         {/* 选择第二段的说话人 */}
         {splitPosition !== null && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
               片段 2 的说话人
             </label>
             <select
               value={newSpeaker}
               onChange={(e) => setNewSpeaker(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500 dark:bg-gray-700 dark:text-gray-200"
             >
               <option value="">保持原说话人 ({segment?.speaker})</option>
               {speakers.map((s) => (
@@ -563,7 +563,7 @@ export function SplitSegmentDialog({
           </div>
         )}
 
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
           提示：分割后的时间会按文本比例自动计算
         </p>
       </div>

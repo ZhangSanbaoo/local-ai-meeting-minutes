@@ -45,7 +45,18 @@ async def list_history(limit: int = 50, offset: int = 0):
             continue
 
         result_file = d / "result.json"
+        created_at = datetime.fromtimestamp(d.stat().st_ctime)
+
         if not result_file.exists():
+            # 不完整的记录（处理中断），仍然列出以便用户删除
+            items.append(HistoryItemResponse(
+                id=d.name,
+                name=f"[未完成] {d.name}",
+                created_at=created_at,
+                duration=0,
+                segment_count=0,
+                has_summary=False,
+            ))
             continue
 
         try:
@@ -59,9 +70,6 @@ async def list_history(limit: int = 50, offset: int = 0):
 
             # 检查是否有总结
             has_summary = (d / "summary.md").exists()
-
-            # 获取创建时间：用目录创建时间（不受 result.json 重写影响）
-            created_at = datetime.fromtimestamp(d.stat().st_ctime)
 
             items.append(HistoryItemResponse(
                 id=d.name,

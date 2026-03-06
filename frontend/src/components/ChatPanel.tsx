@@ -212,13 +212,13 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
   return (
     <div className="flex flex-col h-full">
       {/* LLM 模型控制栏 */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50">
-        <span className="text-xs text-gray-500 whitespace-nowrap">LLM</span>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
+        <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">LLM</span>
         <select
           value={selectedModel}
           onChange={(e) => setSelectedModel(e.target.value)}
           disabled={llmState === 'loaded' || llmState === 'loading'}
-          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 rounded text-xs disabled:bg-gray-100 disabled:cursor-not-allowed"
+          className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-xs disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-200"
         >
           {availableModels.length === 0 ? (
             <option value="">无可用模型</option>
@@ -233,7 +233,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
           <button
             onClick={handleUnload}
             disabled={isGenerating}
-            className="px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            className="px-2 py-1 text-xs border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
           >
             卸载
           </button>
@@ -241,7 +241,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
           <button
             onClick={handleLoad}
             disabled={llmState === 'loading' || !selectedModel}
-            className="px-2 py-1 text-xs border border-blue-300 text-blue-600 rounded hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1"
+            className="px-2 py-1 text-xs border border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap flex items-center gap-1"
           >
             {llmState === 'loading' && <Loader2 className="w-3 h-3 animate-spin" />}
             {llmState === 'loading' ? '加载中' : '加载'}
@@ -252,7 +252,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
         <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
           llmState === 'loaded' ? 'bg-green-500' :
           llmState === 'loading' ? 'bg-yellow-500 animate-pulse' :
-          'bg-gray-300'
+          'bg-gray-300 dark:bg-gray-600'
         }`} title={
           llmState === 'loaded' ? `已加载: ${loadedModelName}` :
           llmState === 'loading' ? '加载中...' : '未加载'
@@ -262,7 +262,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
       {/* 消息列表 */}
       <div className="flex-1 overflow-auto p-3 space-y-3">
         {messages.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm text-center px-4">
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm text-center px-4">
             {noHistory
               ? '请先选择一条历史记录'
               : llmState !== 'loaded'
@@ -279,11 +279,11 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
                 className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                   msg.role === 'user'
                     ? 'bg-blue-500 text-white'
-                    : 'bg-gray-100 text-gray-800'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
                 }`}
               >
                 {msg.role === 'assistant' ? (
-                  <div className="prose prose-sm max-w-none prose-p:my-1 prose-li:my-0.5">
+                  <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-li:my-0.5">
                     <ReactMarkdown>{msg.content || '...'}</ReactMarkdown>
                   </div>
                 ) : (
@@ -297,7 +297,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
       </div>
 
       {/* 底部输入区 */}
-      <div className="border-t border-gray-200 p-2">
+      <div className="border-t border-gray-200 dark:border-gray-600 p-2">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -310,14 +310,14 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
             }
             disabled={!canChat}
             rows={1}
-            className="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+            className="flex-1 resize-none border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-100 dark:disabled:bg-gray-700 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-500"
             style={{ maxHeight: '80px' }}
           />
           <div className="flex gap-1">
             {isGenerating ? (
               <button
                 onClick={handleStop}
-                className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                className="p-2 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
                 title="停止生成"
               >
                 <Square className="w-4 h-4" />
@@ -326,7 +326,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
               <button
                 onClick={handleSend}
                 disabled={!canChat || !input.trim()}
-                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg disabled:text-gray-300 disabled:cursor-not-allowed"
+                className="p-2 text-blue-500 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg disabled:text-gray-300 dark:disabled:text-gray-600 disabled:cursor-not-allowed"
                 title="发送 (Enter)"
               >
                 <Send className="w-4 h-4" />
@@ -335,7 +335,7 @@ export function ChatPanel({ historyId, disabled }: ChatPanelProps) {
             <button
               onClick={handleClear}
               disabled={!canChat || isGenerating || messages.length === 0}
-              className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg disabled:text-gray-200 disabled:cursor-not-allowed"
+              className="p-2 text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg disabled:text-gray-200 dark:disabled:text-gray-600 disabled:cursor-not-allowed"
               title="清空对话"
             >
               <Trash2 className="w-4 h-4" />

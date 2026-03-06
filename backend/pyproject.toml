@@ -71,6 +71,9 @@ stream = [
     "webrtcvad>=2.0.10",
     "funasr>=1.0.0",          # 阿里 FunASR 流式语音识别
 ]
+qwen3 = [
+    "qwen-asr>=0.0.6",       # Qwen3-ASR 语音识别 (52 语言 + 22 中文方言)
+]
 
 [project.scripts]
 meeting-ai = "meeting_ai.cli:app"

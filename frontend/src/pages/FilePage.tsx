@@ -624,19 +624,19 @@ export function FilePage() {
             {sourceType === 'history' && selectedHistoryId && segments.length > 1 && (
               isMergeMode ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
                     已选择 {selectedForMerge.length} 个片段
                   </span>
                   <button
                     onClick={handleMergeSegments}
                     disabled={selectedForMerge.length < 2 || isMerging}
-                    className="px-2 py-1 text-xs bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="px-2 py-1 text-xs bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                   >
                     {isMerging ? '合并中...' : '确认合并'}
                   </button>
                   <button
                     onClick={handleCancelMerge}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100"
+                    className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                   >
                     取消
                   </button>
@@ -651,7 +651,7 @@ export function FilePage() {
                     setIsMergeMode(true)
                   }}
                   disabled={isPlaying}
-                  className="flex items-center gap-1 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex items-center gap-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   title={isPlaying ? '请先暂停音频' : '合并相邻片段'}
                 >
                   <Merge className="w-3 h-3" />
@@ -662,7 +662,7 @@ export function FilePage() {
           </div>
 
           {/* 对话列表 */}
-          <div className="flex-1 border border-gray-300 rounded-lg overflow-auto">
+          <div className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg overflow-auto">
             {segments.length > 0 ? (
               <div className="p-2 space-y-1">
                 {segments.map((segment) => (
@@ -716,7 +716,7 @@ export function FilePage() {
                 ))}
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+              <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm">
                 处理音频后将在此显示对话记录...
               </div>
             )}
@@ -726,8 +726,8 @@ export function FilePage() {
           <div className="mt-2">
             {audioOriginalUrl && audioUrl && audioOriginalUrl !== audioUrl && (
               <div className="flex items-center gap-2 mb-1 px-1">
-                <span className="text-xs text-gray-500 mr-0.5">播放:</span>
-                <div className="inline-flex rounded border border-gray-300 overflow-hidden">
+                <span className="text-xs text-gray-500 dark:text-gray-400 mr-0.5">播放:</span>
+                <div className="inline-flex rounded border border-gray-300 dark:border-gray-600 overflow-hidden">
                   <button
                     onClick={() => {
                       if (useOriginalAudio) {
@@ -739,7 +739,7 @@ export function FilePage() {
                     className={`text-xs px-2.5 py-1 transition-colors ${
                       !useOriginalAudio
                         ? 'bg-blue-500 text-white font-medium'
-                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                     }`}
                   >
                     增强音频
@@ -752,10 +752,10 @@ export function FilePage() {
                         setSeekRequest({ time: t, id: Date.now(), autoPlay: false })
                       }
                     }}
-                    className={`text-xs px-2.5 py-1 border-l border-gray-300 transition-colors ${
+                    className={`text-xs px-2.5 py-1 border-l border-gray-300 dark:border-gray-600 transition-colors ${
                       useOriginalAudio
                         ? 'bg-blue-500 text-white font-medium'
-                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                        : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                     }`}
                   >
                     原始音频
@@ -775,7 +775,7 @@ export function FilePage() {
         </div>
 
         {/* 分隔线 */}
-        <div className="w-1.5 bg-gray-200" />
+        <div className="w-1.5 bg-gray-200 dark:bg-gray-700" />
 
         {/* 右侧：会议总结 */}
         <div className="flex-[4] p-2 min-w-0">
@@ -790,14 +790,14 @@ export function FilePage() {
       </div>
 
       {/* 底部控制区 */}
-      <div className="border-t bg-gray-50 px-4 py-3 space-y-3">
+      <div className="border-t bg-gray-50 dark:bg-gray-900 dark:border-gray-700 px-4 py-3 space-y-3">
         {/* 第一行：文件选择 + 模型 + 开始按钮 */}
         <div className="flex items-center gap-3 flex-wrap">
           {sourceType === 'new' ? (
             <>
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded hover:bg-gray-100"
+                className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
               >
                 <Upload className="w-4 h-4" />
                 浏览...
@@ -809,7 +809,7 @@ export function FilePage() {
                 className="hidden"
                 onChange={handleFileSelect}
               />
-              <span className="text-sm text-gray-600 truncate max-w-[150px]">
+              <span className="text-sm text-gray-600 dark:text-gray-300 truncate max-w-[150px]">
                 {selectedFile ? selectedFile.name : '未选择文件'}
               </span>
               <input
@@ -818,7 +818,7 @@ export function FilePage() {
                 onChange={(e) => setMeetingName(e.target.value)}
                 placeholder="会议名称（可选）"
                 disabled={isProcessing}
-                className="px-3 py-2 border border-gray-300 rounded text-sm w-36 disabled:bg-gray-200"
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm w-36 disabled:bg-gray-200 dark:disabled:bg-gray-700 dark:bg-gray-800 dark:text-gray-200"
               />
             </>
           ) : (
@@ -827,7 +827,7 @@ export function FilePage() {
                 value={selectedHistoryId}
                 onChange={(e) => handleHistorySelect(e.target.value)}
                 disabled={!!backendError}
-                className="px-3 py-2 border border-gray-300 rounded text-sm min-w-[200px] disabled:bg-gray-200 disabled:cursor-not-allowed"
+                className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm min-w-[200px] disabled:bg-gray-200 dark:disabled:bg-gray-700 disabled:cursor-not-allowed dark:bg-gray-800 dark:text-gray-200"
               >
                 {backendError ? (
                   <option value="">后端未连接</option>
@@ -853,7 +853,7 @@ export function FilePage() {
                         setRenameHistory({ id: item.id, name: item.name })
                       }
                     }}
-                    className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+                    className="p-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                     title="重命名"
                   >
                     <Pencil className="w-4 h-4" />
@@ -861,7 +861,7 @@ export function FilePage() {
                   <button
                     onClick={handleRegenerateTranscript}
                     disabled={isRegeneratingTranscript}
-                    className="flex items-center gap-1 px-2 py-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="重新生成对话（ASR重新转写+对齐+校正+命名）"
                   >
                     <RefreshCw className={`w-4 h-4 ${isRegeneratingTranscript ? 'animate-spin' : ''}`} />
@@ -869,7 +869,7 @@ export function FilePage() {
                   </button>
                   <button
                     onClick={handleDeleteHistory}
-                    className="p-2 border border-red-300 rounded hover:bg-red-50 text-red-600"
+                    className="p-2 border border-red-300 dark:border-red-700 rounded hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400"
                     title="删除"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -880,11 +880,11 @@ export function FilePage() {
           )}
 
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 whitespace-nowrap">识别</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">识别</span>
             <select
               value={selectedAsrModel}
               onChange={(e) => setSelectedAsrModel(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[150px]"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm max-w-[150px] dark:bg-gray-800 dark:text-gray-200"
               title="语音识别模型"
             >
               <option value="">请选择</option>
@@ -918,11 +918,11 @@ export function FilePage() {
           </div>
 
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 whitespace-nowrap">LLM</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">LLM</span>
             <select
               value={selectedLlmModel}
               onChange={(e) => setSelectedLlmModel(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[150px]"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm max-w-[150px] dark:bg-gray-800 dark:text-gray-200"
               title="LLM 模型（智能命名/总结）"
             >
               {llmModels.map((m) => (
@@ -934,11 +934,11 @@ export function FilePage() {
           </div>
 
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 whitespace-nowrap">性别</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">性别</span>
             <select
               value={selectedGenderModel}
               onChange={(e) => setSelectedGenderModel(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded text-sm max-w-[130px]"
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm max-w-[130px] dark:bg-gray-800 dark:text-gray-200"
               title="性别检测模型"
             >
               {genderModels.map((m) => (
@@ -951,7 +951,7 @@ export function FilePage() {
 
           <button
             onClick={refreshModels}
-            className="p-2 border border-gray-300 rounded hover:bg-gray-100"
+            className="p-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
             title="刷新模型列表"
           >
             <RefreshCw className="w-4 h-4" />
@@ -965,7 +965,7 @@ export function FilePage() {
               <button
                 onClick={handleProcess}
                 disabled={isProcessing || !selectedFile}
-                className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
               >
                 <Play className="w-4 h-4" />
                 开始处理
@@ -985,7 +985,7 @@ export function FilePage() {
         {/* 第二行：选项 + 导出 */}
         <div className="flex items-center gap-4 flex-wrap">
           <div className="flex items-center gap-4">
-            <label className="flex items-center gap-1.5 text-sm">
+            <label className="flex items-center gap-1.5 text-sm dark:text-gray-200">
               <input
                 type="radio"
                 name="source"
@@ -1002,7 +1002,7 @@ export function FilePage() {
               />
               选择新文件
             </label>
-            <label className="flex items-center gap-1.5 text-sm">
+            <label className="flex items-center gap-1.5 text-sm dark:text-gray-200">
               <input
                 type="radio"
                 name="source"
@@ -1013,9 +1013,9 @@ export function FilePage() {
             </label>
           </div>
 
-          <div className="w-px h-4 bg-gray-300" />
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600" />
 
-          <label className="flex items-center gap-1.5 text-sm">
+          <label className="flex items-center gap-1.5 text-sm dark:text-gray-200">
             <input
               type="checkbox"
               checked={enableNaming}
@@ -1023,7 +1023,7 @@ export function FilePage() {
             />
             智能命名
           </label>
-          <label className="flex items-center gap-1.5 text-sm">
+          <label className="flex items-center gap-1.5 text-sm dark:text-gray-200">
             <input
               type="checkbox"
               checked={enableCorrection}
@@ -1031,7 +1031,7 @@ export function FilePage() {
             />
             错别字校正
           </label>
-          <label className="flex items-center gap-1.5 text-sm">
+          <label className="flex items-center gap-1.5 text-sm dark:text-gray-200">
             <input
               type="checkbox"
               checked={enableSummary}
@@ -1043,7 +1043,7 @@ export function FilePage() {
           <select
             value={enhanceMode}
             onChange={(e) => setProcessOptions({ enhanceMode: e.target.value as typeof enhanceMode })}
-            className="px-2 py-1 border border-gray-300 rounded text-sm"
+            className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-800 dark:text-gray-200"
           >
             <option value="none">不增强</option>
             <option value="denoise">专业降噪 (DeepFilterNet3)</option>
@@ -1058,7 +1058,7 @@ export function FilePage() {
             <button
               onClick={() => handleExport('txt')}
               disabled={!currentJobId}
-              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <FileText className="w-4 h-4" />
               TXT
@@ -1066,7 +1066,7 @@ export function FilePage() {
             <button
               onClick={() => handleExport('json')}
               disabled={!currentJobId}
-              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Code className="w-4 h-4" />
               JSON
@@ -1074,7 +1074,7 @@ export function FilePage() {
             <button
               onClick={() => handleExport('md')}
               disabled={!currentJobId}
-              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 rounded text-sm hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-1 px-3 py-1.5 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <FileDown className="w-4 h-4" />
               Markdown
