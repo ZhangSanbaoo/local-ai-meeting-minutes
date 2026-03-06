@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Upload, Trash2, RefreshCw, HardDrive, Cpu, Info } from 'lucide-react'
+import { Upload, Trash2, RefreshCw, HardDrive, Cpu, Info, Cloud, ChevronDown, ChevronUp, Eye, EyeOff, CheckCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAppStore } from '../stores/appStore'
 import * as api from '../api/client'
-import type { LLMSettings, SystemInfo } from '../types'
+import type { CloudASRProvider, LLMSettings, SystemInfo } from '../types'
 
 export function SettingsPage() {
   const { asrModels, llmModels, genderModels } = useAppStore()
@@ -22,6 +22,14 @@ export function SettingsPage() {
   const [llmSaving, setLlmSaving] = useState(false)
   const [llmSaveMsg, setLlmSaveMsg] = useState<string | null>(null)
 
+  // 云端 ASR 设置
+  const [cloudProviders, setCloudProviders] = useState<CloudASRProvider[]>([])
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(null)
+  const [cloudFormValues, setCloudFormValues] = useState<Record<string, string>>({})
+  const [cloudShowKeys, setCloudShowKeys] = useState<Record<string, boolean>>({})
+  const [cloudSaving, setCloudSaving] = useState(false)
+  const [cloudSaveMsg, setCloudSaveMsg] = useState<string | null>(null)
+
   // 加载系统信息
   useEffect(() => {
     api.getSystemInfo().then(setSystemInfo).catch(console.error)
@@ -33,6 +41,13 @@ export function SettingsPage() {
       setLlmSettings(s)
       setNCtxValue(s.n_ctx)
       setNCtxInput(String(s.n_ctx))
+    }).catch(console.error)
+  }, [])
+
+  // 加载云端 ASR 设置
+  useEffect(() => {
+    api.getCloudASRSettings().then((res) => {
+      setCloudProviders(res.providers)
     }).catch(console.error)
   }, [])
 
@@ -74,6 +89,41 @@ export function SettingsPage() {
     setNCtxValue(llmSettings.recommended_n_ctx)
     setNCtxInput(String(llmSettings.recommended_n_ctx))
   }, [llmSettings])
+
+  const handleSaveCloudASR = useCallback(async (_providerId: string, fields: Array<{ key: string }>) => {
+    const values: Record<string, string> = {}
+    for (const field of fields) {
+      const v = cloudFormValues[field.key]
+      // 只提交有改动的字段（非空且不是遮蔽显示的旧值）
+      if (v !== undefined && v !== '') {
+        values[field.key] = v
+      }
+    }
+    if (Object.keys(values).length === 0) return
+
+    setCloudSaving(true)
+    setCloudSaveMsg(null)
+    try {
+      await api.updateCloudASRSettings(values)
+      // 重新拉取最新状态
+      const res = await api.getCloudASRSettings()
+      setCloudProviders(res.providers)
+      setCloudFormValues({})
+      setCloudSaveMsg('已保存')
+      // 刷新模型列表（云端引擎配置后需要出现在 ASR 下拉框）
+      api.getModels().then((data) => {
+        const asr = data.asr_models?.length ? data.asr_models : data.whisper_models
+        useAppStore.getState().setModels(asr, data.llm_models, data.gender_models)
+      }).catch(console.error)
+      setTimeout(() => setCloudSaveMsg(null), 2000)
+    } catch (err) {
+      console.error('云端 ASR 保存失败:', err)
+      setCloudSaveMsg('保存失败，请检查网络和 API Key')
+      setTimeout(() => setCloudSaveMsg(null), 4000)
+    } finally {
+      setCloudSaving(false)
+    }
+  }, [cloudFormValues])
 
   // 刷新模型列表
   const refreshModels = useCallback(async () => {
@@ -568,6 +618,138 @@ export function SettingsPage() {
           ) : (
             <div className="text-gray-400 dark:text-gray-500">加载中...</div>
           )}
+        </section>
+
+        {/* 云端 ASR API 配置 */}
+        <section className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900/50 p-6">
+          <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-sky-500" />
+            云端 ASR API
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            配置国内主流云端语音识别服务，无需本地 GPU，转写后在本地完成说话人分离和 LLM 处理。
+            API Key 仅存储在本地 <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded text-xs">backend/.env</code> 文件，不会上传。
+          </p>
+
+          {cloudSaveMsg && (
+            <div className={clsx(
+              'mb-4 px-4 py-2 rounded text-sm',
+              cloudSaveMsg.includes('失败')
+                ? 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                : 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300',
+            )}>
+              {cloudSaveMsg}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {cloudProviders.map((provider) => (
+              <div key={provider.id} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                {/* Provider header */}
+                <button
+                  className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
+                  onClick={() => setExpandedProvider(
+                    expandedProvider === provider.id ? null : provider.id
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-sm">{provider.label}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{provider.desc}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {provider.configured && (
+                      <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        已配置
+                      </span>
+                    )}
+                    {expandedProvider === provider.id
+                      ? <ChevronUp className="w-4 h-4 text-gray-400" />
+                      : <ChevronDown className="w-4 h-4 text-gray-400" />
+                    }
+                  </div>
+                </button>
+
+                {/* Provider form */}
+                {expandedProvider === provider.id && (
+                  <div className="px-4 py-4 space-y-3">
+                    {provider.configured && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        已有配置。重新输入新密钥可覆盖，留空则保持不变。
+                      </p>
+                    )}
+                    {provider.fields.map((field) => (
+                      <div key={field.key}>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          {field.label}
+                          {provider.current_values[field.key] && (
+                            <span className="ml-2 text-xs text-gray-400 font-normal">
+                              当前: {provider.current_values[field.key]}
+                            </span>
+                          )}
+                        </label>
+                        <div className="relative">
+                          <input
+                            type={cloudShowKeys[field.key] ? 'text' : 'password'}
+                            value={cloudFormValues[field.key] ?? ''}
+                            onChange={(e) => setCloudFormValues(prev => ({
+                              ...prev,
+                              [field.key]: e.target.value,
+                            }))}
+                            placeholder={provider.configured ? '留空保持不变' : field.placeholder}
+                            className="w-full pr-10 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setCloudShowKeys(prev => ({
+                              ...prev,
+                              [field.key]: !prev[field.key],
+                            }))}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                          >
+                            {cloudShowKeys[field.key]
+                              ? <EyeOff className="w-4 h-4" />
+                              : <Eye className="w-4 h-4" />
+                            }
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        onClick={() => handleSaveCloudASR(provider.id, provider.fields)}
+                        disabled={cloudSaving || provider.fields.every(f => !cloudFormValues[f.key])}
+                        className="px-4 py-2 bg-sky-600 text-white text-sm rounded hover:bg-sky-700 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
+                      >
+                        {cloudSaving ? '保存中...' : '保存'}
+                      </button>
+                      {provider.configured && (
+                        <button
+                          onClick={async () => {
+                            // 清除该 provider 的所有字段
+                            const clearValues: Record<string, string> = {}
+                            for (const f of provider.fields) {
+                              clearValues[f.key] = ''
+                            }
+                            await api.updateCloudASRSettings(clearValues)
+                            const res = await api.getCloudASRSettings()
+                            setCloudProviders(res.providers)
+                          }}
+                          className="px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
+                        >
+                          清除
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {cloudProviders.length === 0 && (
+              <div className="text-center text-gray-400 dark:text-gray-500 py-6 text-sm">加载中...</div>
+            )}
+          </div>
         </section>
 
         {/* 性别检测模型管理 */}

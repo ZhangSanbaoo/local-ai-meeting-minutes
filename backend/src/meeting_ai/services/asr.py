@@ -1859,6 +1859,11 @@ def get_asr_engine(model_name: str | None = None) -> ASREngine:
     if model_name is None:
         model_name = get_settings().asr.model_name
 
+    # 云端引擎：直接从 cloud_asr 模块获取（不需要本地模型）
+    if model_name and model_name.startswith("cloud-"):
+        from .cloud_asr import get_cloud_engine
+        return get_cloud_engine(model_name)
+
     # 模型切换：释放旧引擎
     if _engine is not None and _engine_model != model_name:
         logger.info(f"ASR 引擎切换: {_engine_model} → {model_name}")
@@ -1866,6 +1871,7 @@ def get_asr_engine(model_name: str | None = None) -> ASREngine:
         _engine = None
 
     # 引擎被外部 unload 后 _model 为 None，需重新加载
+    # 注意：云端引擎 _model=True，此处不会误判
     if _engine is not None and getattr(_engine, '_model', None) is None:
         logger.info(f"ASR 引擎已卸载，重新加载: {model_name}")
         _engine = None

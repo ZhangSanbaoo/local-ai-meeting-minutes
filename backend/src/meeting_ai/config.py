@@ -181,6 +181,32 @@ class LLMSettings(BaseSettings):
         return Path(v)
 
 
+class CloudASRSettings(BaseSettings):
+    """云端 ASR API 配置（国内主流服务商，API Key 存储在 .env）"""
+
+    # 腾讯云 ASR — SentenceRecognition（微信同款）
+    tencent_secret_id: str = Field(default="")
+    tencent_secret_key: str = Field(default="")
+
+    # 百度 ASR — Pro API
+    baidu_api_key: str = Field(default="")
+    baidu_secret_key: str = Field(default="")
+
+    # 讯飞 ASR — 录音文件转写 lfasr v2
+    iflytek_app_id: str = Field(default="")
+    iflytek_api_key: str = Field(default="")
+    iflytek_api_secret: str = Field(default="")
+
+    # 字节跳动/火山引擎 ASR
+    bytedance_app_id: str = Field(default="")
+    bytedance_access_token: str = Field(default="")
+
+    # 阿里云 DashScope ASR — paraformer-v2
+    ali_api_key: str = Field(default="")
+
+    model_config = SettingsConfigDict(env_prefix="MEETING_AI_CLOUD_ASR_")
+
+
 class Settings(BaseSettings):
     """主配置类 - 聚合所有子配置"""
 
@@ -199,6 +225,7 @@ class Settings(BaseSettings):
     gender: GenderSettings = Field(default_factory=GenderSettings)
     streaming: StreamingSettings = Field(default_factory=StreamingSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    cloud_asr: CloudASRSettings = Field(default_factory=CloudASRSettings)
 
     model_config = SettingsConfigDict(
         env_prefix="MEETING_AI_",

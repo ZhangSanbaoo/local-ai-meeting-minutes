@@ -177,6 +177,28 @@ export type RealtimeState =
   | 'done'
   | 'error'
 
+// 云端 ASR 配置
+export interface CloudASRField {
+  key: string
+  label: string
+  placeholder: string
+}
+
+export interface CloudASRProvider {
+  id: string
+  label: string
+  desc: string
+  cer: string
+  vram: string
+  fields: CloudASRField[]
+  configured: boolean
+  current_values: Record<string, string>
+}
+
+export interface CloudASRSettingsResponse {
+  providers: CloudASRProvider[]
+}
+
 // 流式 ASR 引擎
 export interface StreamingEngine {
   id: string

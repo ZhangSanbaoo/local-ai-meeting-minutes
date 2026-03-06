@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type {
+  CloudASRSettingsResponse,
   HistoryItem,
   JobResponse,
   LLMSettings,
@@ -67,6 +68,16 @@ export async function deleteLlmModel(modelName: string): Promise<void> {
 export async function getSystemInfo(): Promise<SystemInfo> {
   const { data } = await client.get<SystemInfo>('/system')
   return data
+}
+
+// 云端 ASR 设置
+export async function getCloudASRSettings(): Promise<CloudASRSettingsResponse> {
+  const { data } = await client.get<CloudASRSettingsResponse>('/settings/cloud-asr')
+  return data
+}
+
+export async function updateCloudASRSettings(values: Record<string, string>): Promise<void> {
+  await client.put('/settings/cloud-asr', values)
 }
 
 // LLM 参数设置

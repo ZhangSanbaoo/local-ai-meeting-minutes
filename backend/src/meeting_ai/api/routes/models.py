@@ -16,9 +16,15 @@ from meeting_ai.api.schemas import (
     StreamingEnginesListResponse,
     SystemInfoResponse,
 )
-from meeting_ai.config import get_settings
+from meeting_ai.config import get_settings, reload_settings
 from meeting_ai.services.asr import detect_engine_type
 from meeting_ai.services.streaming_asr import list_available_engines
+from meeting_ai.services.cloud_asr import (
+    CLOUD_ENGINE_META,
+    CLOUD_ENGINE_FIELDS,
+    is_cloud_engine_id,
+    get_cloud_engine,
+)
 
 import logging
 
@@ -211,6 +217,26 @@ async def list_models():
                     path=str(d),
                     size_mb=round(size_mb, 1),
                 ))
+
+    # 添加已配置的云端 ASR 引擎
+    cloud_cfg = settings.cloud_asr
+    _cloud_fields_check = {
+        "cloud-tencent": bool(cloud_cfg.tencent_secret_id and cloud_cfg.tencent_secret_key),
+        "cloud-baidu": bool(cloud_cfg.baidu_api_key and cloud_cfg.baidu_secret_key),
+        "cloud-iflytek": bool(cloud_cfg.iflytek_app_id and cloud_cfg.iflytek_api_key and cloud_cfg.iflytek_api_secret),
+        "cloud-bytedance": bool(cloud_cfg.bytedance_app_id and cloud_cfg.bytedance_access_token),
+        "cloud-ali": bool(cloud_cfg.ali_api_key),
+    }
+    for engine_id, configured in _cloud_fields_check.items():
+        if configured:
+            meta = CLOUD_ENGINE_META[engine_id]
+            asr_models.append(ModelInfoResponse(
+                name=engine_id,
+                display_name=f"☁ {meta['label']} ({meta['cer']} {meta['vram']})",
+                path="",
+                size_mb=None,
+                engine="cloud",
+            ))
 
     return ModelsListResponse(
         asr_models=asr_models,
@@ -558,6 +584,74 @@ async def update_llm_settings(body: LLMSettingsUpdate):
         _update_env_value("MEETING_AI_LLM__N_CTX", str(body.n_ctx))
 
     return {"status": "ok", "n_ctx": settings.llm.n_ctx}
+
+
+def _mask_key(value: str) -> str:
+    """遮蔽 API Key，只显示首尾各 4 个字符"""
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "***"
+    return value[:4] + "****" + value[-4:]
+
+
+@router.get("/settings/cloud-asr")
+async def get_cloud_asr_settings():
+    """获取云端 ASR 配置状态（密钥已遮蔽）"""
+    cfg = get_settings().cloud_asr
+    return {
+        "providers": [
+            {
+                "id": engine_id,
+                **CLOUD_ENGINE_META[engine_id],
+                "fields": CLOUD_ENGINE_FIELDS[engine_id],
+                "configured": get_cloud_engine(engine_id).is_configured(),
+                # 返回遮蔽后的当前值，便于前端提示"已有配置"
+                "current_values": {
+                    field["key"]: _mask_key(getattr(cfg, field["key"], ""))
+                    for field in CLOUD_ENGINE_FIELDS[engine_id]
+                },
+            }
+            for engine_id in CLOUD_ENGINE_META
+        ]
+    }
+
+
+@router.put("/settings/cloud-asr")
+async def update_cloud_asr_settings(body: dict):
+    """
+    更新云端 ASR 配置（持久化到 .env，运行时立即生效）
+
+    Body: {"tencent_secret_id": "AKIDxxx", "tencent_secret_key": "xxx", ...}
+    只需传入要更新的字段，其他字段保持不变。空字符串表示清除该字段。
+    """
+    settings = get_settings()
+    cfg = settings.cloud_asr
+
+    # 所有合法的配置字段
+    allowed_keys = {
+        "tencent_secret_id", "tencent_secret_key",
+        "baidu_api_key", "baidu_secret_key",
+        "iflytek_app_id", "iflytek_api_key", "iflytek_api_secret",
+        "bytedance_app_id", "bytedance_access_token",
+        "ali_api_key",
+    }
+
+    updated: list[str] = []
+    for key, value in body.items():
+        if key not in allowed_keys:
+            continue
+        if not isinstance(value, str):
+            continue
+        env_key = f"MEETING_AI_CLOUD_ASR__{key.upper()}"
+        _update_env_value(env_key, value)
+        setattr(cfg, key, value)
+        updated.append(key)
+
+    # 重新加载配置（让云端引擎立即读到新 key）
+    reload_settings()
+
+    return {"status": "ok", "updated": updated}
 
 
 @router.get("/llm/status")
